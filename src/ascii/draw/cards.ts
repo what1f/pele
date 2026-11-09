@@ -166,7 +166,7 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
       if (value !== a[axis]) points.splice(0, points.length, ...move(value));
     }
   });
-  // Align nearly coincident ports instead of introducing a one-cell dogleg.
+  // Prefer a straight route by moving a port within the overlapping node widths.
   routes.forEach((points, i) => {
     if (points.length > 4 || points.length < 2 || layout.edges[i].loop) return;
     const a = points[0];
@@ -174,13 +174,20 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
     const src = layout.nodes[links[i].src];
     const dst = layout.nodes[links[i].dst];
     const vertical = a[0] === points[1][0] && b[0] === points[points.length - 2][0];
-    if (!vertical || Math.abs(a[0] - b[0]) > 2) return;
-    const x = a[0];
-    if (x <= dst.x || x >= dst.x + dst.w - 1 || x <= src.x || x >= src.x + src.w - 1) return;
-    if (routes.some((route, j) => j !== i && route.some((p) => Math.abs(p[0] - x) < 2 && (p[1] === a[1] || Math.abs(p[1] - b[1]) <= 1)))) return;
-    if (layout.nodes.some((r, n) => n !== links[i].src && n !== links[i].dst && !cards[n].group && x >= r.x && x < r.x + r.w && Math.min(a[1], b[1]) < r.y + r.h && Math.max(a[1], b[1]) > r.y)) return;
-    const straight: Point[] = [[x, a[1]], [x, b[1]]];
-    if (portsClear(straight, i) && !hitsNode(straight, i)) routes[i] = straight;
+    if (!vertical) return;
+    for (const x of [b[0], a[0]]) {
+      if (x <= dst.x || x >= dst.x + dst.w - 1 || x <= src.x || x >= src.x + src.w - 1) continue;
+      const straight: Point[] = [[x, a[1]], [x, b[1]]];
+      if (!portsClear(straight, i) || hitsNode(straight, i)) continue;
+      const shared = routes.some((route, j) => j !== i && route.slice(1).some((q, k) => {
+        const p = route[k];
+        return p[0] === x && q[0] === x &&
+          Math.max(Math.min(p[1], q[1]), Math.min(a[1], b[1])) < Math.min(Math.max(p[1], q[1]), Math.max(a[1], b[1]));
+      }));
+      if (shared) continue;
+      routes[i] = straight;
+      break;
+    }
   });
   const simplify = (points: Point[]): Point[] => {
     const clean: Point[] = [];

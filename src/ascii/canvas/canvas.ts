@@ -276,7 +276,9 @@ export class Canvas {
     let maxY = -Infinity;
     for (const [y, row] of this.rows) {
       for (const [x, c] of row) {
-        if (c.arms === 0 && (c.ch === undefined || c.ch === ' ')) continue;
+        // Text hides the line underneath, including when it is a blank.
+        const ch = c.ch === CONT ? row.get(x - 1)?.ch : c.ch;
+        if (ch !== undefined ? !/\S/u.test(ch) : c.arms === 0) continue;
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
