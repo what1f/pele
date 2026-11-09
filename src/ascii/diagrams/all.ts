@@ -4,6 +4,8 @@ import { agentflow } from './agentflow.js';
 import { swimlane } from './swimlane.js';
 import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
+import { wardley } from './wardley.js';
+import { eventmodeling } from './eventmodeling.js';
 import { architecture } from './architecture.js';
 import { block } from './block.js';
 import { c4 } from './c4.js';
@@ -37,6 +39,8 @@ export const all: AsciiDiagram[] = [
   swimlane,
   flowchart,
   sequence,
+  wardley,
+  eventmodeling,
   architecture,
   block,
   c4,
