@@ -10,13 +10,12 @@ const WIDE = [
   0x2757, 0x2757, 0x2795, 0x2797, 0x27b0, 0x27b0, 0x27bf, 0x27bf, 0x2b1b, 0x2b1c, 0x2b50, 0x2b50, 0x2b55, 0x2b55,
   0x2e80, 0x303e, 0x3041, 0x33ff, 0x3400, 0x4dbf, 0x4e00, 0x9fff, 0xa000, 0xa4cf, 0xa960, 0xa97f, 0xac00, 0xd7a3,
   0xf900, 0xfaff, 0xfe10, 0xfe19, 0xfe30, 0xfe6f, 0xff00, 0xff60, 0xffe0, 0xffe6, 0x16fe0, 0x16fe4, 0x17000, 0x18cff,
-  0x1b000, 0x1b2ff, 0x1f004, 0x1f004, 0x1f0cf, 0x1f0cf, 0x1f18e, 0x1f18e, 0x1f191, 0x1f19a, 0x1f200, 0x1f251,
-  0x1f300, 0x1f320, 0x1f32d, 0x1f335, 0x1f337, 0x1f37c, 0x1f37e, 0x1f393, 0x1f3a0, 0x1f3ca, 0x1f3cf, 0x1f3d3,
-  0x1f3e0, 0x1f3f0, 0x1f3f4, 0x1f3f4, 0x1f3f8, 0x1f43e, 0x1f440, 0x1f440, 0x1f442, 0x1f4fc, 0x1f4ff, 0x1f53d,
-  0x1f54b, 0x1f54e, 0x1f550, 0x1f567, 0x1f57a, 0x1f57a, 0x1f595, 0x1f596, 0x1f5a4, 0x1f5a4, 0x1f5fb, 0x1f64f,
-  0x1f680, 0x1f6c5, 0x1f6cc, 0x1f6cc, 0x1f6d0, 0x1f6d2, 0x1f6d5, 0x1f6d7, 0x1f6dc, 0x1f6df, 0x1f6eb, 0x1f6ec,
-  0x1f6f4, 0x1f6fc, 0x1f7e0, 0x1f7eb, 0x1f7f0, 0x1f7f0, 0x1f90c, 0x1f93a, 0x1f93c, 0x1f945, 0x1f947, 0x1f9ff,
-  0x1fa70, 0x1faff, 0x20000, 0x2fffd, 0x30000, 0x3fffd,
+  0x1b000, 0x1b2ff, 0x1f004, 0x1f004, 0x1f0cf, 0x1f0cf, 0x1f18e, 0x1f18e, 0x1f191, 0x1f19a, 0x1f200, 0x1f251, 0x1f300,
+  0x1f320, 0x1f32d, 0x1f335, 0x1f337, 0x1f37c, 0x1f37e, 0x1f393, 0x1f3a0, 0x1f3ca, 0x1f3cf, 0x1f3d3, 0x1f3e0, 0x1f3f0,
+  0x1f3f4, 0x1f3f4, 0x1f3f8, 0x1f43e, 0x1f440, 0x1f440, 0x1f442, 0x1f4fc, 0x1f4ff, 0x1f53d, 0x1f54b, 0x1f54e, 0x1f550,
+  0x1f567, 0x1f57a, 0x1f57a, 0x1f595, 0x1f596, 0x1f5a4, 0x1f5a4, 0x1f5fb, 0x1f64f, 0x1f680, 0x1f6c5, 0x1f6cc, 0x1f6cc,
+  0x1f6d0, 0x1f6d2, 0x1f6d5, 0x1f6d7, 0x1f6dc, 0x1f6df, 0x1f6eb, 0x1f6ec, 0x1f6f4, 0x1f6fc, 0x1f7e0, 0x1f7eb, 0x1f7f0,
+  0x1f7f0, 0x1f90c, 0x1f93a, 0x1f93c, 0x1f945, 0x1f947, 0x1f9ff, 0x1fa70, 0x1faff, 0x20000, 0x2fffd, 0x30000, 0x3fffd,
 ];
 
 // 组合符号、零宽字符、变体选择符：不占列。
@@ -85,14 +84,18 @@ export function truncate(text: string, max: number, ellipsis = '…'): string {
   return out + ellipsis;
 }
 
-// 按显示宽度折行：优先在空格处断，中日韩文字可以在任意字之间断。
-export function wrap(text: string, max: number): string[] {
-  if (max <= 0 || displayWidth(text) <= max) return [text];
+// 不能出现在行首的标点（避头），和不能出现在行尾的标点（避尾）。
+const NO_START = new Set([...'，。、；：？！）》」』】〉,.;:?!)]}%…']);
+const NO_END = new Set([...'（《「『【〈([{']);
+
+// 贪心折行：优先在空格处断，中日韩文字可以在任意字之间断。
+function greedyWrap(text: string, max: number): string[] {
   const lines: string[] = [];
   let line = '';
   let lineW = 0;
-  // 记录行内最后一个可断开的位置（空格后、宽字符前后）。
+  // 行内最后一个可断开的位置。
   let breakAt = -1;
+  let prev = '';
   for (const c of cells(text)) {
     if (lineW + c.width > max && line !== '') {
       if (breakAt > 0) {
@@ -107,11 +110,41 @@ export function wrap(text: string, max: number): string[] {
       breakAt = -1;
       if (c.ch === ' ' && line === '') continue;
     }
-    if (c.width === 2 && line !== '') breakAt = line.length;
+    // 宽字符之前可断，但不在避头标点前、避尾标点后断。
+    if (line !== '' && (c.width === 2 || prev === ' ') && !NO_START.has(c.ch) && !NO_END.has(prev)) {
+      breakAt = line.length;
+    }
     line += c.ch;
     lineW += c.width;
-    if (c.ch === ' ' || c.width === 2) breakAt = line.length;
+    prev = c.ch;
   }
   if (line.trim() !== '' || lines.length === 0) lines.push(line.trimEnd());
   return lines;
+}
+
+// 均衡折行：行数和贪心折行相同，但让各行尽量一样宽，避免最后一行只剩一两个字。
+export function wrap(text: string, max: number): string[] {
+  if (max <= 0 || displayWidth(text) <= max) return [text];
+  const greedy = greedyWrap(text, max);
+  const n = greedy.length;
+  if (n < 2) return greedy;
+  // 找出仍能折成 n 行的最小宽度。
+  let lo = Math.max(1, Math.ceil(displayWidth(text) / n));
+  let hi = max;
+  let best = greedy;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const lines = greedyWrap(text, mid);
+    if (lines.length <= n && lines.every((l) => displayWidth(l) <= mid)) {
+      best = lines;
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  if (lo === hi) {
+    const lines = greedyWrap(text, lo);
+    if (lines.length <= n && lines.every((l) => displayWidth(l) <= lo)) best = lines;
+  }
+  return best;
 }
