@@ -7,6 +7,9 @@ import { er } from './er.js';
 import { gantt } from './gantt.js';
 import { git } from './git.js';
 import { state } from './state.js';
+import { mindmap } from './mindmap.js';
+import { treeView } from './treeView.js';
+import { ishikawa } from './ishikawa.js';
 
 export const all: AsciiDiagram[] = [
   flowchart,
@@ -16,4 +19,7 @@ export const all: AsciiDiagram[] = [
   gantt,
   git,
   state,
+  mindmap,
+  treeView,
+  ishikawa,
 ];
