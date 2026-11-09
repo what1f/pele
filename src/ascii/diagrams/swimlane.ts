@@ -29,23 +29,43 @@ const place: LanePlacer = (nodes, edges, dir) => {
     const h = c.isGroup ? Math.round(c.h / 10) : nodes[i].h;
     return { x: Math.round(c.x / 8) - Math.floor(w / 2) + (sideways ? 0 : slot(i) * 3), y: Math.round(c.y / 10) - Math.floor(h / 2) + (sideways ? slot(i) * 3 : 0), w, h };
   });
-  // Lane headers share one band; trim the SVG layout's extra leading header space.
-  const items = rects.filter((_, i) => !laneRoots.includes(i));
-  if (items.length && laneRoots.length) {
-    if (sideways) {
-      const left = Math.min(...items.map(r => r.x)) - 3;
-      for (const i of laneRoots) {
-        const r = rects[i], delta = Math.max(0, left - r.x);
-        r.x += delta; r.w -= delta;
-      }
-    } else {
-      const head = Math.max(...laneRoots.map(i => nodes[i].padTop ?? 3));
-      const top = Math.min(...items.map(r => r.y)) - head;
-      for (const i of laneRoots) {
-        const r = rects[i], delta = Math.max(0, top - r.y);
-        r.y += delta; r.h -= delta;
-      }
+  const descendants = (root: number): number[] => nodes.map((_, i) => {
+    let p = i;
+    while (p >= 0 && p !== root) p = nodes[p].parent ?? -1;
+    return p === root && i !== root ? i : -1;
+  }).filter(i => i >= 0);
+  const nested = nodes.map((n, i) => n.isGroup && !laneRoots.includes(i) ? i : -1).filter(i => i >= 0);
+  const depth = (i: number): number => (nodes[i].parent ?? -1) < 0 ? 0 : depth(nodes[i].parent!) + 1;
+  nested.sort((a, b) => depth(b) - depth(a));
+  for (const i of nested) {
+    const children = rects.filter((_, j) => nodes[j].parent === i);
+    if (!children.length) continue;
+    const x = Math.min(...children.map(r => r.x)) - 3;
+    const y = Math.min(...children.map(r => r.y)) - (nodes[i].padTop ?? 2);
+    Object.assign(rects[i], { x, y, w: Math.max(nodes[i].minW ?? 0, Math.max(...children.map(r => r.x + r.w)) + 3 - x), h: Math.max(...children.map(r => r.y + r.h)) + 2 - y });
+  }
+  const content = rects.filter((_, i) => !laneRoots.includes(i));
+  if (!content.length) return rects;
+  const start = Math.min(...content.map(r => sideways ? r.x : r.y));
+  const end = Math.max(...content.map(r => sideways ? r.x + r.w : r.y + r.h));
+  let cross = 0;
+  for (const i of laneRoots) {
+    const members = descendants(i);
+    const children = members.filter(j => nodes[j].parent === i).map(j => rects[j]);
+    const min = children.length ? Math.min(...children.map(r => sideways ? r.y : r.x)) : 0;
+    const max = children.length ? Math.max(...children.map(r => sideways ? r.y + r.h : r.x + r.w)) : 1;
+    const pad = sideways ? (nodes[i].padTop ?? 2) : 3;
+    const channel = sideways ? Math.max(0, ...edges.filter(e => members.includes(e.src) && !members.includes(e.dst) && (e.labelH ?? 0) > 0).map(e => (e.labelH ?? 0) + 1)) : 0;
+    const breadth = Math.max(max - min + pad + (sideways ? 2 + channel : 3), sideways ? 4 : (nodes[i].minW ?? 4));
+    const shift = cross + pad - min;
+    for (const j of members) {
+      if (sideways) rects[j].y += shift;
+      else rects[j].x += shift;
     }
+    Object.assign(rects[i], sideways
+      ? { x: start - 3, y: cross, w: Math.max(end - start + 6, nodes[i].minW ?? 0), h: breadth }
+      : { x: cross, y: start - (nodes[i].padTop ?? 2), w: breadth, h: end - start + (nodes[i].padTop ?? 2) + 2 });
+    cross += breadth + (sideways ? 1 : 2);
   }
   return rects;
 };
