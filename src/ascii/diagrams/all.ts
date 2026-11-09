@@ -8,8 +8,11 @@ import { classDiagram } from './class.js';
 import { er } from './er.js';
 import { gantt } from './gantt.js';
 import { git } from './git.js';
+import { ishikawa } from './ishikawa.js';
+import { mindmap } from './mindmap.js';
 import { railroad } from './railroad.js';
 import { state } from './state.js';
+import { treeView } from './treeView.js';
 import { usecase } from './usecase.js';
 
 export const all: AsciiDiagram[] = [
@@ -21,7 +24,10 @@ export const all: AsciiDiagram[] = [
   er,
   gantt,
   git,
+  ishikawa,
+  mindmap,
   railroad,
   state,
+  treeView,
   usecase,
 ];
