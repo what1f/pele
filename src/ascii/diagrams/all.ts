@@ -19,8 +19,16 @@ import { state } from './state.js';
 import { timeline } from './timeline.js';
 import { treeView } from './treeView.js';
 import { usecase } from './usecase.js';
+import { pie } from './pie.js';
+import { treemap } from './treemap.js';
+import { info } from './info.js';
+import { packet } from './packet.js';
 
 export const all: AsciiDiagram[] = [
+  pie,
+  treemap,
+  info,
+  packet,
   flowchart,
   sequence,
   architecture,
