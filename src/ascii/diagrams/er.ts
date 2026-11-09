@@ -3,9 +3,9 @@ import { parseGenericTypes } from '../../diagrams/common/generics.js';
 import { buildErGraph, type ErGraphNode } from '../../diagrams/er/graph.js';
 import type { ErModel } from '../../diagrams/er/types.js';
 import { Canvas, type Rect } from '../canvas/canvas.js';
-import { Arm } from '../canvas/glyphs.js';
 import type { AsciiContext, AsciiDiagram } from '../core.js';
-import { finishEdge, placeLabel } from '../draw/edges.js';
+import { finishEdge } from '../draw/edges.js';
+import { routeEr } from '../layout/er.js';
 import { layoutGraph, type GraphNode, type GraphEdge, type Point, type Dir } from '../layout/graph.js';
 import { label, type TextBlock } from '../text/label.js';
 import { displayWidth, wrap } from '../text/width.js';
@@ -102,10 +102,6 @@ function cardinality(canvas: Canvas, p: Point, next: Point, kind: string): Rect 
   return { x: Math.min(p[0] + dx, p[0] + dx * 2) - Math.abs(dy), y: Math.min(p[1] + dy, p[1] + dy * 2) - Math.abs(dx), w: dx ? 2 : 3, h: dy ? 2 : 3 };
 }
 
-function intersects(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
 function draw(model: ErModel, ctx: AsciiContext, flow: Dir, spacing = 0): Canvas {
   const graph = buildErGraph(model);
   const width = ctx.compact ? Math.max(8, Math.min(20, Math.floor(ctx.maxWidth / 3) - 6)) : 24;
@@ -118,180 +114,128 @@ function draw(model: ErModel, ctx: AsciiContext, flow: Dir, spacing = 0): Canvas
     parent: n.parentId ? (index.get(n.parentId) ?? -1) : -1,
     dir: n.dir ? direction(n.dir) : undefined,
     padX: 2, padTop: 2, padBottom: 1,
-    minW: n.isGroup ? views[i].title.width * 2 + 18 : undefined,
+    minW: n.isGroup ? views[i].title.width + 12 : undefined,
   }));
-  const edges: GraphEdge[] = [];
   const drawn = graph.edges.flatMap((e) => {
     const src = index.get(e.start);
     const dst = index.get(e.end);
     if (src === undefined || dst === undefined) return [];
-    const caption = text(e.label, ctx.compact ? 12 : 18);
-    edges.push({ src, dst, labelW: caption.width, labelH: caption.height });
-    return [{ ...e, src, dst, caption }];
+    return [{ ...e, src, dst, text: text(e.label, ctx.compact ? 12 : 18) }];
   });
-  const loops = new Map<number, number>();
+  const bundles = new Map<string, typeof drawn>();
+  const loopPad = nodes.map(() => 0);
   drawn.forEach((e) => {
-    if (e.src !== e.dst) return;
-    const count = (loops.get(e.src) ?? 0) + Math.max(6, e.caption.height + 3);
-    loops.set(e.src, count);
-    nodes[e.src].extraRight = Math.max(nodes[e.src].extraRight ?? 0, e.caption.width + 10);
+    if (e.src === e.dst) {
+      loopPad[e.src] += e.text.height + 2 + (loopPad[e.src] === 0 ? 1 : 0);
+      nodes[e.src].w = Math.max(nodes[e.src].w, e.text.width + 12);
+    } else {
+      const key = [e.src, e.dst].sort((a, b) => a - b).join(':');
+      const list = bundles.get(key) ?? [];
+      list.push(e);
+      bundles.set(key, list);
+    }
   });
   nodes.forEach((n, i) => {
     const ports = drawn.filter((e) => e.src !== e.dst && (e.src === i || e.dst === i)).length;
-    if (n.isGroup) {
-      n.minW = Math.max(n.minW ?? 0, views[i].title.width * 2 + 18 + ports * 4);
-      return;
-    }
-    if (flow === 'LR' || flow === 'RL') n.h = Math.max(n.h, Math.max(0, ports - 1) * 4 + 3);
+    if (n.isGroup) n.minW = Math.max(n.minW ?? 0, views[i].title.width + 12 + ports * 4);
     else n.w = Math.max(n.w, Math.max(0, ports - 1) * 4 + 5);
-    n.h = Math.max(n.h, (loops.get(i) ?? 0) + 3);
   });
-  // Layout the clearance envelopes, then bring the ports back to the visible borders.
-  const envelopes = nodes.map((n) => n.isGroup ? n : { ...n, w: n.w + 6, h: n.h + 6 });
-  const layout = layoutGraph(envelopes, edges, flow, { nodeSep: (ctx.compact ? 3 : 5) + spacing, rankSep: 2 + spacing, edgeSep: 3 });
-  layout.nodes = layout.nodes.map((r) => ({ x: r.x + 3, y: r.y + 3, w: Math.max(4, r.w - 6), h: Math.max(3, r.h - 6) }));
-  const ports = new Map<string, { edge: number; start: boolean; coordinate: number }[]>();
-  layout.edges.forEach((e, k) => {
-    if (e.points.length < 2) return;
-    for (const start of [true, false]) {
-      const p = e.points[start ? 0 : e.points.length - 1];
-      const q = e.points[start ? 1 : e.points.length - 2];
-      const vertical = p[0] === q[0];
-      const side = vertical ? (q[1] > p[1] ? 'bottom' : 'top') : (q[0] > p[0] ? 'right' : 'left');
-      const key = `${start ? edges[k].src : edges[k].dst}:${side}`;
-      const list = ports.get(key) ?? [];
-      list.push({ edge: k, start, coordinate: p[vertical ? 0 : 1] });
-      ports.set(key, list);
+  for (const list of bundles.values()) {
+    if (list.length < 2) continue;
+    const gap = Math.max(4, ...list.map((e) => e.text.width + 4));
+    for (const i of [list[0].src, list[0].dst]) {
+      if (!nodes[i].isGroup) nodes[i].w = Math.max(nodes[i].w, (list.length - 1) * gap + 9);
     }
-  });
-  const portAt = new Map<string, number>();
-  for (const [key, list] of ports) {
-    const [node, side] = key.split(':');
-    const r = layout.nodes[Number(node)];
-    if (list.length < 2 && !(nodes[Number(node)].isGroup && side === 'top')) continue;
-    const vertical = side === 'top' || side === 'bottom';
-    const center = vertical ? r.x + (r.w - 1) / 2 : r.y + (r.h - 1) / 2;
-    list.sort((a, b) => a.coordinate - b.coordinate || a.edge - b.edge);
-    list.forEach((port, j) => portAt.set(`${port.edge}:${port.start}`, nodes[Number(node)].isGroup && side === 'top' ? r.x + r.w - 3 - (list.length - 1 - j) * 4 : Math.round(center + (j - (list.length - 1) / 2) * 4)));
   }
-  layout.edges.forEach((e, k) => {
-    if (e.points.length < 2) return;
-    const from = layout.nodes[edges[k].src];
-    const to = layout.nodes[edges[k].dst];
-    const pts = e.points;
-    const first = pts[0];
-    const next = pts[1];
-    const end = pts[pts.length - 1];
-    const prev = pts[pts.length - 2];
-    const firstVertical = first[0] === next[0];
-    const lastVertical = end[0] === prev[0];
-    const out = firstVertical ? Math.sign(next[1] - first[1]) : Math.sign(next[0] - first[0]);
-    const into = lastVertical ? Math.sign(end[1] - prev[1]) : Math.sign(end[0] - prev[0]);
-    const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
-    if (firstVertical) {
-      first[0] = clamp(portAt.get(`${k}:true`) ?? first[0], from.x + 1, from.x + from.w - 2);
-      first[1] = out > 0 ? from.y + from.h - 1 : from.y;
-    } else {
-      first[1] = clamp(portAt.get(`${k}:true`) ?? first[1], from.y + 1, from.y + from.h - 2);
-      first[0] = out > 0 ? from.x + from.w - 1 : from.x;
+  const edges: GraphEdge[] = drawn.map((e) => ({ src: e.src, dst: e.dst, labelW: e.text.width, labelH: e.text.height }));
+  const envelopes = nodes.map((n, i) => n.isGroup ? n : { ...n, w: n.w + 6, h: n.h + 6 + loopPad[i] });
+  const layout = layoutGraph(envelopes, edges, flow, { nodeSep: 5 + spacing, rankSep: 2 + spacing, edgeSep: 3 });
+  layout.nodes = layout.nodes.map((r, i) => ({
+    x: r.x + 3, y: r.y + 3 + (nodes[i].isGroup ? 0 : loopPad[i]),
+    w: Math.max(4, r.w - 6), h: nodes[i].isGroup ? Math.max(3, r.h - 6) : views[i].h,
+  }));
+  const neighbors = nodes.map((_, i) => new Set(drawn.filter((e) => e.src !== e.dst && (e.src === i || e.dst === i)).map((e) => e.src === i ? e.dst : e.src)));
+  for (const list of bundles.values()) {
+    if (list.length < 2) continue;
+    let hub = list[0].src;
+    let leaf = list[0].dst;
+    if (neighbors[leaf].size !== 1) [hub, leaf] = [leaf, hub];
+    if (neighbors[leaf].size !== 1 || nodes[leaf].isGroup || nodes[hub].isGroup) continue;
+    const a = layout.nodes[hub];
+    const b = layout.nodes[leaf];
+    if (a.y + a.h + 3 >= b.y && b.y + b.h + 3 >= a.y) continue;
+    const targetX = Math.round(a.x + (a.w - b.w) / 2);
+    const moved = { ...b, x: targetX };
+    if (layout.nodes.some((r, i) => i !== leaf && !nodes[i].isGroup && moved.x < r.x + r.w + 2 && r.x < moved.x + moved.w + 2 && moved.y < r.y + r.h + 1 && r.y < moved.y + moved.h + 1)) continue;
+    b.x = targetX;
+    if ((nodes[leaf].parent ?? -1) < 0) {
+      let outer = hub;
+      for (let parent = nodes[outer].parent ?? -1; parent >= 0; parent = nodes[outer].parent ?? -1) outer = parent;
+      const boundary = layout.nodes[outer];
+      const y = b.y > a.y ? Math.max(boundary.y + boundary.h + 5, a.y + a.h + 8) : Math.min(boundary.y - b.h - 5, a.y - b.h - 8);
+      if (!layout.nodes.some((r, i) => i !== leaf && y < r.y + r.h + 1 && r.y < y + b.h + 1 && b.x < r.x + r.w + 2 && r.x < b.x + b.w + 2)) b.y = y;
     }
-    if (lastVertical) {
-      end[0] = clamp(portAt.get(`${k}:false`) ?? end[0], to.x + 1, to.x + to.w - 2);
-      end[1] = into > 0 ? to.y - 1 : to.y + to.h;
-    } else {
-      end[1] = clamp(portAt.get(`${k}:false`) ?? end[1], to.y + 1, to.y + to.h - 2);
-      end[0] = into > 0 ? to.x - 1 : to.x + to.w;
-    }
-    if (pts.length === 2) {
-      if (first[0] !== end[0] && first[1] !== end[1]) {
-        const mid = firstVertical ? Math.round((first[1] + end[1]) / 2) : Math.round((first[0] + end[0]) / 2);
-        pts.splice(1, 0, firstVertical ? [first[0], mid] : [mid, first[1]], firstVertical ? [end[0], mid] : [mid, end[1]]);
-      }
-    } else {
-      if (firstVertical) next[0] = first[0]; else next[1] = first[1];
-      if (lastVertical) prev[0] = end[0]; else prev[1] = end[1];
-    }
-  });
-  const canvas = new Canvas();
+    // Keep a single child beside the parallel corridor instead of directly in its path.
+    const gap = Math.max(4, ...list.map((e) => e.text.width + 4));
+    const left = a.x + (a.w - 1) / 2 - (list.length - 1) * gap / 2;
+    nodes.forEach((n, i) => {
+      if (n.isGroup || i === leaf || neighbors[i].size !== 1 || !neighbors[i].has(hub) || n.parent !== nodes[hub].parent) return;
+      const r = layout.nodes[i];
+      if (r.y > a.y && r.y < b.y) r.x = Math.floor(left - 3 - r.w);
+    });
+  }
   const groups = graph.nodes.map((n, i) => n.isGroup ? i : -1).filter((i) => i >= 0);
+  for (const i of [...groups].reverse()) {
+    const r = layout.nodes[i];
+    nodes.forEach((n, j) => {
+      if (n.parent !== i) return;
+      const child = layout.nodes[j];
+      const left = Math.min(r.x, child.x - 3);
+      const top = Math.min(r.y, child.y - loopPad[j] - 2);
+      r.w = Math.max(r.x + r.w, child.x + child.w + 3) - left;
+      r.h = Math.max(r.y + r.h, child.y + child.h + 2) - top;
+      r.x = left;
+      r.y = top;
+    });
+  }
+  if (ctx.compact) {
+    const bottom = Math.max(0, ...layout.nodes.map((r) => r.y + r.h));
+    let y = bottom + 2;
+    nodes.forEach((n, i) => {
+      if (n.isGroup || (n.parent ?? -1) >= 0 || neighbors[i].size || loopPad[i]) return;
+      layout.nodes[i].x = Math.min(...layout.nodes.map((r) => r.x));
+      layout.nodes[i].y = y;
+      y += layout.nodes[i].h + 2;
+    });
+  }
+  const routeNodes = layout.nodes.map((r, i) => ({ ...r, group: !!nodes[i].isGroup, titleWidth: views[i].title.width }));
+  const order = drawn.map((_, i) => i).sort((a, b) => Number(drawn[b].src === drawn[b].dst) - Number(drawn[a].src === drawn[a].dst));
+  const routed = routeEr(routeNodes, order.map((i) => drawn[i]));
+  if (!routed) return draw(model, ctx, flow, spacing + 2);
+  const canvas = new Canvas();
   for (const i of groups) {
     const r = layout.nodes[i];
     canvas.box(r.x, r.y, r.w, r.h, { fill: false });
   }
-  const loopAt = new Map<number, number>();
-  drawn.forEach((e, k) => {
-    if (!layout.edges[k].loop) return;
-    const offset = loopAt.get(e.src) ?? 0;
-    const band = Math.max(6, e.caption.height + 3);
-    loopAt.set(e.src, offset + band);
-    const r = layout.nodes[e.src];
-    const right = r.x + r.w - 1;
-    const y = r.y + 1 + offset;
-    const out = right + e.caption.width + 8;
-    layout.edges[k].points = [[right, y], [out, y], [out, y + band - 3], [right + 1, y + band - 3]];
-    layout.edges[k].label = [right + 4, y];
-  });
-  drawn.forEach((e, k) => canvas.path(layout.edges[k].points, { dashed: e.pattern === 'dashed' }));
+  routed.forEach((r, k) => canvas.path(r.points, { dashed: drawn[order[k]].pattern === 'dashed' }));
   nodes.forEach((n, i) => { if (!n.isGroup) entity(canvas, layout.nodes[i], views[i]); });
-  const blocked: Rect[] = [];
-  drawn.forEach((e, k) => {
-    const pts = layout.edges[k].points;
-    if (pts.length < 2) return;
-    finishEdge(canvas, pts, { head: 'none', dashed: e.pattern === 'dashed' });
-    blocked.push(cardinality(canvas, pts[0], pts[1], e.arrowTypeStart));
-    const end = pts[pts.length - 1];
-    const before = pts[pts.length - 2];
-    const border: Point = [end[0] + Math.sign(end[0] - before[0]), end[1] + Math.sign(end[1] - before[1])];
-    blocked.push(cardinality(canvas, border, before, e.arrowTypeEnd));
-  });
-  for (const i of groups) {
-    const r = layout.nodes[i];
-    const title = ` ${views[i].title.lines.join(' ')} `;
-    let x = r.x + 2;
-    for (; x + displayWidth(title) < r.x + r.w - 1; x++) {
-      if (Array.from({ length: displayWidth(title) + 2 }, (_, k) => canvas.armsAt(x + k - 1, r.y)).every((a) => !(a & (Arm.Up | Arm.Down)))) break;
+  routed.forEach((route, k) => {
+    const e = drawn[order[k]];
+    const pts = route.points.map((p) => [...p] as Point);
+    const border = pts[pts.length - 1];
+    const prev = pts[pts.length - 2];
+    const end: Point = [border[0] + Math.sign(prev[0] - border[0]), border[1] + Math.sign(prev[1] - border[1])];
+    finishEdge(canvas, [...pts.slice(0, -1), end], { head: 'none', dashed: e.pattern === 'dashed' });
+    cardinality(canvas, pts[0], pts[1], e.arrowTypeStart);
+    cardinality(canvas, border, prev, e.arrowTypeEnd);
+    if (route.label) {
+      const [x, y] = route.label;
+      canvas.clear(x - 1, y, e.text.width + 2, e.text.height);
+      e.text.lines.forEach((line, j) => canvas.textIn(x, y + j, e.text.width, line, 'center', { role: 'label' }));
     }
-    canvas.text(x, r.y, title, { role: 'title' });
-  }
-  const segments = layout.edges.map((e) => e.points.slice(1).map((b, j) => {
-    const a = e.points[j];
-    return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(a[0] - b[0]) + 1, h: Math.abs(a[1] - b[1]) + 1 };
-  }));
-  let needsSpace = false;
-  drawn.forEach((e, k) => {
-    const laid = layout.edges[k];
-    const t = e.caption;
-    if (!laid.label || !t.height) return;
-    const near: Point = [laid.label[0] + (t.width >> 1), laid.label[1] + (t.height >> 1)];
-    const preferred = placeLabel(laid.points, near, t.width, t.height);
-    const candidates: Point[] = [preferred];
-    for (let j = 1; j < laid.points.length; j++) {
-      const a = laid.points[j - 1];
-      const b = laid.points[j];
-      const len = Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]);
-      for (let step = 3; step < len - 2; step++) {
-        const x = a[0] + Math.sign(b[0] - a[0]) * step;
-        const y = a[1] + Math.sign(b[1] - a[1]) * step;
-        candidates.push([x - (t.width >> 1), y - (t.height >> 1)]);
-        if (a[0] === b[0]) candidates.push([x + 2, y - (t.height >> 1)], [x - t.width - 1, y - (t.height >> 1)]);
-        else candidates.push([x - (t.width >> 1), y - t.height], [x - (t.width >> 1), y + 1]);
-      }
-    }
-    const safe = ([x, y]: Point): boolean => {
-      const area = { x: x - 1, y, w: t.width + 2, h: t.height };
-      if (blocked.some((r) => intersects(area, r))) return false;
-      if (segments.some((list, j) => j !== k && list.some((r) => intersects(area, r)))) return false;
-      return layout.nodes.every((r, i) => nodes[i].isGroup
-        ? !intersects(area, { ...r, h: 1 }) && !intersects(area, { ...r, y: r.y + r.h - 1, h: 1 }) && !intersects(area, { ...r, w: 1 }) && !intersects(area, { ...r, x: r.x + r.w - 1, w: 1 })
-        : !intersects(area, r));
-    };
-    const at = candidates.find(safe);
-    if (!at) { needsSpace = true; return; }
-    canvas.clear(at[0] - 1, at[1], t.width + 2, t.height);
-    t.lines.forEach((line, j) => canvas.textIn(at[0], at[1] + j, t.width, line, 'center', { role: 'label' }));
-    blocked.push({ x: at[0] - 1, y: at[1], w: t.width + 2, h: t.height });
   });
-  return needsSpace ? draw(model, ctx, flow, spacing + 2) : canvas;
+  for (const i of groups) canvas.text(layout.nodes[i].x + 2, layout.nodes[i].y, ` ${views[i].title.lines.join(' ')} `, { role: 'title' });
+  return canvas;
 }
 
 export const er: AsciiDiagram<ErModel> = {
