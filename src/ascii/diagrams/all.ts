@@ -9,8 +9,16 @@ import { git } from './git.js';
 import { railroad } from './railroad.js';
 import { state } from './state.js';
 import { usecase } from './usecase.js';
+import { pie } from './pie.js';
+import { treemap } from './treemap.js';
+import { info } from './info.js';
+import { packet } from './packet.js';
 
 export const all: AsciiDiagram[] = [
+  pie,
+  treemap,
+  info,
+  packet,
   flowchart,
   sequence,
   classDiagram,
