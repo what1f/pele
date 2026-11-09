@@ -11,6 +11,9 @@ import { git } from './git.js';
 import { railroad } from './railroad.js';
 import { state } from './state.js';
 import { usecase } from './usecase.js';
+import { xychart } from './xychart.js';
+import { radar } from './radar.js';
+import { quadrant } from './quadrant.js';
 
 export const all: AsciiDiagram[] = [
   flowchart,
@@ -24,4 +27,7 @@ export const all: AsciiDiagram[] = [
   railroad,
   state,
   usecase,
+  xychart,
+  radar,
+  quadrant,
 ];
