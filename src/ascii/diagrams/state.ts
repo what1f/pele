@@ -7,7 +7,7 @@ import { drawEdgeLine, finishEdge } from '../draw/edges.js';
 import { drawShape, type ShapeKind } from '../draw/shapes.js';
 import { layoutGraph, type GraphNode, type GraphEdge, type Point } from '../layout/graph.js';
 import { label, type TextBlock } from '../text/label.js';
-import { displayWidth, wrap } from '../text/width.js';
+import { displayWidth, wrap, truncate } from '../text/width.js';
 
 const STEPS: Point[] = [
   [0, -1],
@@ -97,7 +97,7 @@ function route(
         }
       }
       for (const nd of [d, (d + 1) % 4, (d + 3) % 4]) {
-        if (nd !== d && canvas.armsAt(x, y)) continue;
+        if (nd !== d && (canvas.armsAt(x, y) || roots.has(k))) continue;
         const [dx, dy] = STEPS[nd];
         const nx = x + dx,
           ny = y + dy;
@@ -124,7 +124,8 @@ function route(
   points.push(roots.get(at)!.border);
   points.reverse();
   points.push(bestGoal.border);
-  return points;
+  // A caption gate can coincide with a port; duplicate cells have no heading.
+  return points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
 }
 
 function ports(r: Rect, incoming: boolean): Port[] {
@@ -157,11 +158,25 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     return ctx.compact && (d === 'LR' || d === 'RL') ? 'TB' : d;
   };
   const text = (raw: string | undefined, maxWidth = ctx.compact ? 14 : 24): TextBlock => {
-    const b = label(raw, { maxWidth, markdown: true });
-    const lines = b.lines.flatMap((line) => wrap(line, maxWidth));
+    const b = label(raw, { markdown: true });
+    const lines = b.lines.flatMap((line) => {
+      const width = displayWidth(line);
+      const columns =
+        /[\u3400-\u9fff]/u.test(line) && width > maxWidth
+          ? Math.min(maxWidth, Math.ceil(width / Math.ceil(width / maxWidth) / 2) * 2)
+          : maxWidth;
+      return wrap(line, columns);
+    });
     return { lines, height: lines.length, width: Math.max(0, ...lines.map(displayWidth)) };
   };
-  const titles = nodes.map((n) => text(n.shape === 'divider' ? undefined : n.label));
+  const titles = nodes.map((n) => {
+    if (!n.isGroup) return text(n.label);
+    const title =
+      n.shape === 'divider'
+        ? ''
+        : truncate(label(n.label, { markdown: true }).lines.join(' '), Math.max(2, ctx.maxWidth - 12));
+    return { lines: title ? [title] : [], height: title ? 1 : 0, width: displayWidth(title) };
+  });
   const descriptions = nodes.map((n) => n.description.map((s) => text(s)));
   const kinds: ShapeKind[] = nodes.map((n) =>
     n.shape === 'stateStart'
@@ -241,8 +256,8 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     if (e.src !== e.dst) return;
     const nth = loops.get(e.src) ?? 0;
     loops.set(e.src, nth + 1);
-    gn[e.src].extraRight = Math.max(gn[e.src].extraRight ?? 0, labels[k].width + 8);
-    if (!gn[e.src].isGroup) gn[e.src].h = Math.max(gn[e.src].h, (nth + 1) * 2 + 1);
+    gn[e.src].extraRight = Math.max(gn[e.src].extraRight ?? 0, labels[k].width + 14 + nth * 2);
+    if (!gn[e.src].isGroup && nth > 0) gn[e.src].h = Math.max(gn[e.src].h, nth * 2 + 7);
   });
   // Invisible constraints stack concurrent regions in compact mode.
   const ordering: GraphEdge[] = [];
@@ -260,6 +275,14 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     if (left) noteOffsets.set(owner, (noteOffsets.get(owner) ?? 0) + room);
     gn[owner].extraRight = (gn[owner].extraRight ?? 0) + room;
     if (!gn[owner].isGroup) gn[owner].h = Math.max(gn[owner].h, gn[i].h);
+  }
+  for (const [owner] of loops) {
+    const parent = gn[owner].parent ?? -1;
+    if (parent >= 0) {
+      const room =
+        ge.reduce((sum, e, k) => sum + (e.src === owner && e.dst === owner ? labels[k].height + 2 : 0), 0) + 1;
+      gn[parent].padTop = Math.max(gn[parent].padTop ?? 2, room);
+    }
   }
   const layoutNodes = gn.map((n, i) => (noteOwners.has(i) ? { ...n, w: 0, h: 0, parent: -1 } : n));
   const laid = layoutGraph(layoutNodes, [...ge, ...ordering], flow(db.direction), {
@@ -289,6 +312,13 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
         if (edge.label && edge.label[1] >= cut) edge.label[1] += delta;
       });
     });
+  const loopEdges = new Map<number, number[]>();
+  ge.forEach((e, k) => {
+    if (e.src !== e.dst) return;
+    const ks = loopEdges.get(e.src) ?? [];
+    ks.push(k);
+    loopEdges.set(e.src, ks);
+  });
   for (const [owner, offset] of noteOffsets) rects[owner].x += offset;
   for (const [i, owner] of noteOwners) {
     const r = rects[owner];
@@ -320,7 +350,6 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     const b = titles[i];
     if (b.height) {
       c.text(r.x + 2, r.y, ` ${b.lines[0]} `);
-      b.lines.slice(1).forEach((line, j) => c.textIn(r.x + 1, r.y + 1 + j, r.w - 2, line));
       captions.push({ rect: { x: r.x + 1, y: r.y, w: Math.max(b.width + 4, r.w - 2), h: b.height }, text: b });
     }
   }
@@ -396,6 +425,38 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     drawEdgeLine(c, pts, { dashed: true });
     finishEdge(c, pts, { dashed: true, head: 'none' });
   }
+  // Outer loops leave farther left, rise higher and return lower than inner loops.
+  const loopCaptions: Caption[] = [];
+  for (const [owner, ks] of loopEdges) {
+    const r = rects[owner];
+    const innerRight = r.x + r.w + 3 + Math.max(0, ...ks.map((k) => labels[k].width));
+    let top = r.y - 2;
+    ks.forEach((k, nth) => {
+      const b = labels[k];
+      const x = r.x + r.w - 2 - nth;
+      const right = innerRight + nth * 2;
+      const back = r.y + 1 + nth * 2;
+      const pts: Point[] = [
+        [x, r.y],
+        [x, top],
+        [right, top],
+        [right, back],
+        [r.x + r.w, back],
+      ];
+      drawEdgeLine(c, pts);
+      finishEdge(c, pts);
+      if (b.height) {
+        const cap: Caption = { rect: { x: r.x + r.w + 1, y: top - b.height, w: b.width + 2, h: b.height }, text: b };
+        loopCaptions.push(cap);
+        captions.push(cap);
+      }
+      top -= b.height + 2;
+    });
+  }
+  for (const cap of loopCaptions) {
+    c.clear(cap.rect.x, cap.rect.y, cap.rect.w, cap.rect.h);
+    cap.text.lines.forEach((line, j) => c.textIn(cap.rect.x + 1, cap.rect.y + j, cap.rect.w - 2, line));
+  }
   const bounds = c.bounds() ?? { x: 0, y: 0, w: 1, h: 1 };
   const board: Rect = { x: bounds.x - 6, y: bounds.y - 6, w: bounds.w + 20, h: bounds.h + 20 };
   const occupied = (r: Rect): boolean => {
@@ -403,14 +464,21 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     return captions.some(({ rect: q }) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
   };
   const edgeCaptions: (Caption | undefined)[] = labels.map((b, k) => {
-    if (!b.height) return undefined;
+    if (!b.height || ge[k].src === ge[k].dst) return undefined;
     const e = ge[k],
       r = rects[e.src];
     const target = rects[e.dst];
     const gapTop = r.y + r.h <= target.y ? r.y + r.h : target.y + target.h;
     const gapBottom = r.y + r.h <= target.y ? target.y : r.y;
-    const near: Point =
-      gapBottom > gapTop && e.src !== e.dst
+    const horizontal = gapBottom <= gapTop;
+    const forward = target.x >= r.x;
+    const baseline = forward ? r.y + Math.floor(r.h / 2) : Math.max(r.y + r.h, target.y + target.h) + b.height + 1;
+    const near: Point = horizontal
+      ? [
+          Math.floor((Math.min(r.x + r.w, target.x + target.w) + Math.max(r.x, target.x) - b.width) / 2),
+          baseline - b.height,
+        ]
+      : gapBottom > gapTop && e.src !== e.dst
         ? [
             laid.edges[k].label?.[0] ?? Math.floor((r.x + r.w / 2 + target.x + target.w / 2 - b.width) / 2),
             gapTop + Math.floor((gapBottom - gapTop - b.height) / 2),
@@ -426,7 +494,9 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
             rect.y < board.y + 2 ||
             rect.x + rect.w >= board.x + board.w - 2 ||
             rect.y + rect.h >= board.y + board.h - 2 ||
-            occupied({ x: rect.x - 1, y: rect.y - 2, w: rect.w + 2, h: rect.h + 4 })
+            occupied(
+              horizontal ? { ...rect, h: rect.h + 1 } : { x: rect.x - 1, y: rect.y - 2, w: rect.w + 2, h: rect.h + 4 },
+            )
           )
             continue;
           const cap = { rect, text: b };
@@ -447,9 +517,9 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     const side = e.src !== e.dst && !vertical;
     const forward = side ? b.x >= a.x : b.y >= a.y;
     const x = r.x + Math.floor(r.w / 2),
-      y = r.y + Math.floor(r.h / 2);
-    const entry: Point = side ? [forward ? r.x - 1 : r.x + r.w, y] : [x, forward ? r.y - 1 : r.y + r.h];
-    const exit: Point = side ? [forward ? r.x + r.w : r.x - 1, y] : [x, forward ? r.y + r.h : r.y - 1];
+      y = r.y + r.h;
+    const entry: Point = side ? [forward ? r.x : r.x + r.w - 1, y] : [x, forward ? r.y - 1 : r.y + r.h];
+    const exit: Point = side ? [forward ? r.x + r.w - 1 : r.x, y] : [x, forward ? r.y + r.h : r.y - 1];
     const d = side ? (forward ? 1 : 3) : forward ? 2 : 0;
     const [dx, dy] = STEPS[d];
     cap.gates = [entry, exit, [entry[0] - dx, entry[1] - dy], [exit[0] + dx, exit[1] + dy]];
@@ -458,11 +528,28 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
   const connect = (starts: Port[], ends: Port[], cap?: Caption): Point[] =>
     route(c, solids, captions, starts, ends, board, cap);
   ge.forEach((e, k) => {
+    if (e.src === e.dst) return;
     const a = rects[e.src],
       b = rects[e.dst];
     const cap = edgeCaptions[k];
-    const starts = ports(a, false),
-      ends = ports(b, true);
+    const nodePorts = (i: number, incoming: boolean): Port[] =>
+      ports(rects[i], incoming).filter((p) => {
+        if (kinds[i] === 'bar') return rects[i].h === 1 ? p.dir % 2 === 0 : p.dir % 2 === 1;
+        return !nodes[i].isGroup || c.charAt(...p.border) === undefined;
+      });
+    let starts = nodePorts(e.src, false),
+      ends = nodePorts(e.dst, true);
+    // A reciprocal return runs below the forward transition.
+    if (
+      b.x + b.w <= a.x &&
+      !(a.y + a.h <= b.y || b.y + b.h <= a.y) &&
+      kinds[e.src] !== 'bar' &&
+      kinds[e.dst] !== 'bar' &&
+      ge.some((other) => other.src === e.dst && other.dst === e.src)
+    ) {
+      starts = starts.filter((p) => p.dir === 2);
+      ends = ends.filter((p) => p.dir === 0);
+    }
     const ac: Point = [a.x + Math.floor(a.w / 2), a.y + Math.floor(a.h / 2)];
     const bc: Point = [b.x + Math.floor(b.w / 2), b.y + Math.floor(b.h / 2)];
     const vertical = a.y + a.h <= b.y || b.y + b.h <= a.y;
@@ -498,6 +585,7 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
     } else pts = connect(starts, ends);
     if (!pts.length) throw new Error('Unable to arrange this state diagram.');
     // The target border is only used during routing; finishEdge expects the preceding cell.
+    pts = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
     pts.pop();
     drawEdgeLine(c, pts);
     finishEdge(c, pts);
