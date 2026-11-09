@@ -9,6 +9,10 @@ import { git } from './git.js';
 import { state } from './state.js';
 import { railroad } from './railroad.js';
 
+import { timeline } from './timeline.js';
+import { journey } from './journey.js';
+import { kanban } from './kanban.js';
+
 export const all: AsciiDiagram[] = [
   flowchart,
   sequence,
@@ -18,4 +22,7 @@ export const all: AsciiDiagram[] = [
   git,
   state,
   railroad,
+  timeline,
+  journey,
+  kanban,
 ];
