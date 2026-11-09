@@ -105,7 +105,7 @@ export function wrap(text: string, max: number): string[] {
         lineW = 0;
       }
       breakAt = -1;
-      if (c.ch === ' ') continue;
+      if (c.ch === ' ' && line === '') continue;
     }
     if (c.width === 2 && line !== '') breakAt = line.length;
     line += c.ch;
