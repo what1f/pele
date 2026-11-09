@@ -4,10 +4,14 @@ import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
 import { classDiagram } from './class.js';
 import { gantt } from './gantt.js';
+import { block } from './block.js';
+import { architecture } from './architecture.js';
 
 export const all: AsciiDiagram[] = [
   flowchart,
   sequence,
   classDiagram,
   gantt,
+  block,
+  architecture,
 ];
