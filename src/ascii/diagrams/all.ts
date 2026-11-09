@@ -2,6 +2,12 @@
 import type { AsciiDiagram } from '../core.js';
 import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
+import { classDiagram } from './class.js';
 import { gantt } from './gantt.js';
 
-export const all: AsciiDiagram[] = [flowchart, sequence, gantt];
+export const all: AsciiDiagram[] = [
+  flowchart,
+  sequence,
+  classDiagram,
+  gantt,
+];
