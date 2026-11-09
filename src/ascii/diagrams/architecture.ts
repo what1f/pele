@@ -2,7 +2,7 @@ import type { ArchitectureModel } from '../../diagrams/architecture/db.js';
 import { placeOnGrid } from '../../diagrams/architecture/layout.js';
 import { Canvas, type Rect } from '../canvas/canvas.js';
 import type { AsciiContext, AsciiDiagram } from '../core.js';
-import { gridLabel as label, gridWires, port, type Side, type Wire } from '../draw/grid-wires.js';
+import { gridLabel as label, gridWires, alignPorts, port, type Side, type Wire } from '../draw/grid-wires.js';
 import { drawShape, shapeSize } from '../draw/shapes.js';
 
 function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
@@ -39,9 +39,10 @@ function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
     const size = shapeSize('rect', texts[i]);
     for (const side of ['L', 'R', 'T', 'B']) {
       const count = counts.get(`n:${n.id}:${side}`) ?? 0;
-      if (side === 'L' || side === 'R') size.h = Math.max(size.h, count + 2);
-      else size.w = Math.max(size.w, count + 2);
+      if (side === 'L' || side === 'R') size.h = Math.max(size.h, 2 * count + 1);
+      else size.w = Math.max(size.w, 2 * count + 1);
     }
+    if (model.edges.some((e) => e.lhsId === n.id && e.rhsId === n.id)) size.w = Math.max(size.w, 7);
     return size;
   });
   const C = Math.max(0, ...grid.col, ...groups.map((_, g) => grid.groupCol[g] + grid.groupCols[g] - 1)) + 1;
@@ -63,12 +64,20 @@ function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
       r0 = grid.groupRow[g],
       r1 = r0 + grid.groupRows[g] - 1;
     const pad = ins[g];
-    pad.l += 3;
-    pad.r += 3;
-    pad.t += Math.max(2, heads[g].height + 1);
+    pad.l += 4;
+    pad.r += 4;
+    const loops = model.edges.some((e) => e.lhsId === e.rhsId && model.nodes.get(e.lhsId)?.in === groups[g].id);
+    pad.t += Math.max(loops ? 4 : 2, heads[g].height + 1);
     pad.b += 2;
-    const room = cw.slice(c0, c1 + 1).reduce((a, v) => a + v, 0) + (c1 - c0) * (ctx.compact ? 4 : 6) + pad.l + pad.r;
-    if (room < heads[g].width + 6) cw[c1] += heads[g].width + 6 - room;
+    const room = cw.slice(c0, c1 + 1).reduce((a, v) => a + v, 0) + (c1 - c0) * (ctx.compact ? 3 : 6) + pad.l + pad.r;
+    const minW = Math.max(
+      heads[g].width + 6,
+      2 * Math.max(counts.get(`g:${groups[g].id}:T`) ?? 0, counts.get(`g:${groups[g].id}:B`) ?? 0) + 1,
+    );
+    if (room < minW) cw[c1] += minW - room;
+    const minH = 2 * Math.max(counts.get(`g:${groups[g].id}:L`) ?? 0, counts.get(`g:${groups[g].id}:R`) ?? 0) + 1;
+    const height = rh.slice(r0, r1 + 1).reduce((a, v) => a + v, 0) + (r1 - r0) * 4 + pad.t + pad.b;
+    if (height < minH) rh[r1] += minH - height;
     l[c0] = Math.max(l[c0], pad.l);
     r[c1] = Math.max(r[c1], pad.r);
     t[r0] = Math.max(t[r0], pad.t);
@@ -86,11 +95,21 @@ function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
     y: number[] = [];
   for (let c = 0, at = 0; c < C; c++) {
     x[c] = at + l[c];
-    at = x[c] + cw[c] + r[c] + (ctx.compact ? 4 : 6);
+    at = x[c] + cw[c] + r[c] + (ctx.compact ? 3 : 6);
   }
   for (let row = 0, at = 0; row < R; row++) {
     y[row] = at + t[row];
-    at = y[row] + rh[row] + b[row] + rowGap;
+    const crossed = model.edges.some((e) => {
+      const a = grid.row[index.get(e.lhsId)!],
+        b = grid.row[index.get(e.rhsId)!];
+      return Math.min(a, b) <= row && Math.max(a, b) > row;
+    });
+    const labelled = model.edges.some((e) => {
+      const a = grid.row[index.get(e.lhsId)!],
+        b = grid.row[index.get(e.rhsId)!];
+      return e.title && Math.min(a, b) <= row && Math.max(a, b) > row;
+    });
+    at = y[row] + rh[row] + b[row] + (labelled ? 8 : crossed ? rowGap : 1);
   }
   const boxes: Rect[] = nodes.map((_, i) => ({
     x: x[grid.col[i]] + Math.floor((cw[grid.col[i]] - sizes[i].w) / 2),
@@ -129,7 +148,7 @@ function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
       const opposite: Record<Side, Side> = { L: 'R', R: 'L', T: 'B', B: 'T' };
       internal.push({
         from: port(boxes[i], side),
-        to: { at: p.at, side: opposite[side] },
+        to: { at: p.at, side: opposite[side], fixed: true },
         text: label(undefined, { maxWidth: 1 }),
         style: { head: 'none', tail: 'none' },
       });
@@ -145,8 +164,10 @@ function render(model: ArchitectureModel, ctx: AsciiContext): Canvas {
       head: e.rhsInto ? 'arrow' : 'none',
     },
   }));
+  alignPorts(wires);
   const headX = frames.map((f, g) => {
     const vertical = wires
+      .filter((w) => Math.min(w.from.at[1], w.to.at[1]) <= f.y && Math.max(w.from.at[1], w.to.at[1]) >= f.y)
       .flatMap((w) => [w.from, w.to])
       .filter((p) => p.side === 'T' || p.side === 'B')
       .map((p) => p.at[0]);

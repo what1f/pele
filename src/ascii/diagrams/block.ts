@@ -3,7 +3,7 @@ import { arrowMask, RIGHT, LEFT, UP, DOWN } from '../../diagrams/block/arrows.js
 import { Canvas, type Rect } from '../canvas/canvas.js';
 import type { AsciiContext, AsciiDiagram } from '../core.js';
 import { markerGlyph, type Marker } from '../draw/edges.js';
-import { gridLabel as label, gridWires, port, type Side, type Wire } from '../draw/grid-wires.js';
+import { gridLabel as label, gridWires, alignPorts, port, type Side, type Wire } from '../draw/grid-wires.js';
 import { drawShape, shapeSize, type ShapeKind } from '../draw/shapes.js';
 import type { TextBlock } from '../text/label.js';
 
@@ -18,6 +18,7 @@ interface View extends Rect {
   cols: number;
   rowH: number[];
   cw: number;
+  gaps: number[];
 }
 const kinds: Record<string, ShapeKind> = {
   round: 'rounded',
@@ -32,8 +33,8 @@ const kinds: Record<string, ShapeKind> = {
 function render(model: BlockModel, ctx: AsciiContext): Canvas {
   const canvas = new Canvas();
   const gx = ctx.compact ? (model.edges.length ? 3 : 2) : 4,
-    gy = model.edges.length ? 2 : 1;
-  const wrap = ctx.compact ? Math.max(4, Math.min(10, Math.floor(ctx.maxWidth / 5))) : 24;
+    gy = 1;
+  const wrap = ctx.compact ? Math.max(4, Math.min(model.edges.length ? 8 : 12, Math.floor(ctx.maxWidth / 5))) : 24;
   const degree = new Map<string, number>();
   for (const e of model.edges)
     for (const id of [e.start, e.end]) {
@@ -42,12 +43,12 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
   const nodeSize = (kind: ShapeKind, text: TextBlock, id: string) => {
     const size = shapeSize(kind, text),
       n = degree.get(id) ?? 0;
-    return { w: Math.max(size.w, n + 2), h: Math.max(size.h, n + 2) };
+    return { w: Math.max(size.w, 2 * n + 1), h: Math.max(size.h, 2 * n + 1) };
   };
   const views: View[] = [];
   const make = (block: Block): View => {
     const text = label(block.type === 'space' ? undefined : block.label, {
-      maxWidth: wrap,
+      maxWidth: wrap * Math.max(1, block.widthInColumns ?? 1),
     });
     const kind = kinds[block.type ?? ''] ?? 'rect';
     const size = nodeSize(kind, text, block.id);
@@ -65,6 +66,7 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
       cols: 0,
       rowH: [],
       cw: 0,
+      gaps: [],
     };
     views.push(v);
     v.children = (block.children ?? []).map(make);
@@ -85,13 +87,29 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
         v.cw = Math.max(v.cw, Math.ceil((c.w - gx * (c.span - 1)) / c.span));
         v.rowH[c.row] = Math.max(v.rowH[c.row] ?? 0, c.h);
       }
-      const px = root ? 0 : 3,
+      const rows = new Map<string, number>();
+      const remember = (c: View, row: number) => {
+        rows.set(c.block.id, row);
+        c.children.forEach((child) => remember(child, row));
+      };
+      v.children.forEach((c) => remember(c, c.row));
+      v.gaps = v.rowH.map(() => gy);
+      for (const e of model.edges) {
+        const a = rows.get(e.start ?? ''),
+          b = rows.get(e.end ?? '');
+        if (a !== undefined && b !== undefined && Math.abs(a - b) === 1)
+          v.gaps[Math.min(a, b)] = Math.max(v.gaps[Math.min(a, b)], e.label ? 5 : 4);
+      }
+      const px = root ? 0 : 4,
         py = root ? 0 : 2;
       v.cw = Math.max(v.cw, Math.ceil(((text.height ? text.width + 6 : 0) - 2 * px - gx * Math.max(0, v.cols - 1)) / Math.max(1, v.cols)));
-      v.w = Math.max(root ? 0 : text.width + 6, v.cols * v.cw + Math.max(0, v.cols - 1) * gx + 2 * px);
+      v.w = Math.max(
+        root ? 0 : Math.max(text.width + 6, 2 * (degree.get(block.id) ?? 0) + 1),
+        v.cols * v.cw + Math.max(0, v.cols - 1) * gx + 2 * px,
+      );
       v.h = Math.max(
-        root ? 0 : 4,
-        v.rowH.reduce((a, b) => a + b, 0) + Math.max(0, v.rowH.length - 1) * gy + 2 * py + Math.max(0, text.height - 1),
+        root ? 0 : Math.max(4, 2 * (degree.get(block.id) ?? 0) + 1),
+        v.rowH.reduce((a, b) => a + b, 0) + v.gaps.slice(0, -1).reduce((a, b) => a + b, 0) + 2 * py + Math.max(0, text.height - 1),
       );
     }
     return v;
@@ -99,11 +117,11 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
   const root = make(model.root);
   const place = (v: View): void => {
     const isRoot = v === root;
-    if (v.cols) v.cw = Math.floor((v.w - (isRoot ? 0 : 6) - (v.cols - 1) * gx) / v.cols);
+    if (v.cols) v.cw = Math.floor((v.w - (isRoot ? 0 : 8) - (v.cols - 1) * gx) / v.cols);
     let y = v.y + (isRoot ? 0 : 2) + Math.max(0, v.text.height - 1);
     for (let row = 0; row < v.rowH.length; row++) {
       for (const c of v.children.filter((c) => c.row === row)) {
-        c.x = v.x + (isRoot ? 0 : 3) + c.col * (v.cw + gx);
+        c.x = v.x + (isRoot ? 0 : 4) + c.col * (v.cw + gx);
         c.y = y;
         c.w = v.cw * c.span + gx * (c.span - 1);
         c.h = v.rowH[row];
@@ -116,7 +134,7 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
         }
         place(c);
       }
-      y += v.rowH[row] + gy;
+      y += v.rowH[row] + v.gaps[row];
     }
   };
   place(root);
@@ -138,7 +156,9 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
     if (!a || !b) return [];
     const dx = b.x + b.w / 2 - a.x - a.w / 2,
       dy = b.y + b.h / 2 - a.y - a.h / 2;
-    const horizontal = Math.abs(dx) > Math.abs(dy) * 2;
+    const overlapX = Math.max(a.x, b.x) < Math.min(a.x + a.w, b.x + b.w);
+    const overlapY = Math.max(a.y, b.y) < Math.min(a.y + a.h, b.y + b.h);
+    const horizontal = !overlapX && (overlapY || Math.abs(dx) > Math.abs(dy) * 2);
     const sa: Side = a === b ? 'T' : horizontal ? (dx > 0 ? 'R' : 'L') : dy >= 0 ? 'B' : 'T';
     const sb: Side = a === b ? 'R' : horizontal ? (dx > 0 ? 'L' : 'R') : dy >= 0 ? 'T' : 'B';
     return [{ e, a, b, sa, sb }];
@@ -164,7 +184,7 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
   const wires: Wire[] = specs.map(({ e, a, b, sa, sb }) => ({
     from: endpoint(a, sa),
     to: endpoint(b, sb),
-    text: label(e.label, { maxWidth: ctx.compact ? 12 : 20 }),
+    text: label(e.label, { maxWidth: ctx.compact ? 6 : 20 }),
     style: {
       head: mark(e.arrowTypeEnd),
       tail: mark(e.arrowTypeStart),
@@ -172,6 +192,7 @@ function render(model: BlockModel, ctx: AsciiContext): Canvas {
       stroke: e.thickness === 'thick' ? 'heavy' : 'light',
     },
   }));
+  alignPorts(wires);
   const finish = gridWires(canvas, leaves, frames, titles, wires);
   for (const v of leaves) {
     drawShape(canvas, v, v.kind, v.text);
