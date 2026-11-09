@@ -60,7 +60,6 @@ function renderClass(model: ClassModel, ctx: AsciiContext): Canvas {
 }
 
 function drawClass(graph: ClassGraph, modelDirection: string, ctx: AsciiContext, spacing = 0): Canvas {
-  const config = (ctx.config.class ?? {}) as Record<string, unknown>;
   const wrap = ctx.compact ? 18 : 32;
   const block = (raw: string | undefined, width: number, markdown = false): TextBlock => {
     const lines = label(raw, { maxWidth: width, markdown }).lines.flatMap((line) => wrapText(line, width));
@@ -78,7 +77,7 @@ function drawClass(graph: ClassGraph, modelDirection: string, ctx: AsciiContext,
     head.push(...text(cls.label + (cls.type ? literal(`<${parseGenericTypes(cls.type)}>`): '')).lines);
     // Keep static/abstract classifiers visible without terminal font styling.
     const members = (list: typeof cls.members): string[] => list.flatMap((m) => text(m.getDisplayDetails().displayText + m.classifier, true).lines);
-    if (config.hideEmptyMembersBox === true && cls.members.length === 0 && cls.methods.length === 0) return [head];
+    if (cls.members.length === 0 && cls.methods.length === 0) return [head];
     return [head, members(cls.members), members(cls.methods)];
   });
   const nodes: GraphNode[] = graph.nodes.map((n, i) => {
