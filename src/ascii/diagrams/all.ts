@@ -7,6 +7,7 @@ import { er } from './er.js';
 import { gantt } from './gantt.js';
 import { git } from './git.js';
 import { state } from './state.js';
+import { railroad } from './railroad.js';
 
 export const all: AsciiDiagram[] = [
   flowchart,
@@ -16,4 +17,5 @@ export const all: AsciiDiagram[] = [
   gantt,
   git,
   state,
+  railroad,
 ];
