@@ -4,6 +4,7 @@ import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
 import { architecture } from './architecture.js';
 import { block } from './block.js';
+import { c4 } from './c4.js';
 import { classDiagram } from './class.js';
 import { er } from './er.js';
 import { gantt } from './gantt.js';
@@ -11,6 +12,7 @@ import { git } from './git.js';
 import { ishikawa } from './ishikawa.js';
 import { mindmap } from './mindmap.js';
 import { railroad } from './railroad.js';
+import { requirement } from './requirement.js';
 import { state } from './state.js';
 import { treeView } from './treeView.js';
 import { usecase } from './usecase.js';
@@ -20,6 +22,7 @@ export const all: AsciiDiagram[] = [
   sequence,
   architecture,
   block,
+  c4,
   classDiagram,
   er,
   gantt,
@@ -27,6 +30,7 @@ export const all: AsciiDiagram[] = [
   ishikawa,
   mindmap,
   railroad,
+  requirement,
   state,
   treeView,
   usecase,
