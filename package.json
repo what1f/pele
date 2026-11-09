@@ -53,7 +53,8 @@
   ],
   "sideEffects": [
     "./dist/pele.js",
-    "./src/index.ts"
+    "./src/index.ts",
+    "./src/ascii/index.ts"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",

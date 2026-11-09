@@ -22,3 +22,10 @@ Pele renders Mermaid text to SVG for Obsidian, themed with CSS custom properties
 - Library code changes: run `npm run typecheck`, `npm test`, and `npm run build`.
 - Website changes: install website dependencies and run `npm run test:website`. These tests are excluded from `npm test`.
 - Website setup: Node 24, pnpm 12; see [README.md](README.md#develop). Other commands are in `package.json`.
+
+## ASCII output (`src/ascii/`)
+
+- Fork-only feature: render a parsed model to terminal text. Read [ASCII.md](ASCII.md) before touching it.
+- One renderer per diagram in `src/ascii/diagrams/<type>.ts`, exported as an `AsciiDiagram` and listed in `src/ascii/diagrams/all.ts`. `flowchart.ts` is the reference.
+- Measure text with `displayWidth()`, never `.length`; wide characters take two cells.
+- Check results visually: `scripts/ascii-gallery.ts` over `tests/corpus/<type>-docs.json`, then `scripts/ascii-sheet.py` to PNG. No unit tests for ASCII output.
