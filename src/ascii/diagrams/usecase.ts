@@ -21,8 +21,9 @@ function marker(type: string): Marker {
 // Compound routes can share a return lane after rounding to terminal cells.
 function separateRoutes(routes: Point[][], boxes: Rect[]): void {
   const overlap = (a: Point, b: Point, c: Point, d: Point): boolean => {
-    if (a[1] === b[1] && c[1] === d[1] && a[1] === c[1]) return Math.min(Math.max(a[0], b[0]), Math.max(c[0], d[0])) > Math.max(Math.min(a[0], b[0]), Math.min(c[0], d[0]));
-    if (a[0] === b[0] && c[0] === d[0] && a[0] === c[0]) return Math.min(Math.max(a[1], b[1]), Math.max(c[1], d[1])) > Math.max(Math.min(a[1], b[1]), Math.min(c[1], d[1]));
+    if (a[0] === b[0] && a[1] === b[1] || c[0] === d[0] && c[1] === d[1]) return false;
+    if (a[1] === b[1] && c[1] === d[1] && a[1] === c[1]) return Math.min(Math.max(a[0], b[0]), Math.max(c[0], d[0])) >= Math.max(Math.min(a[0], b[0]), Math.min(c[0], d[0]));
+    if (a[0] === b[0] && c[0] === d[0] && a[0] === c[0]) return Math.min(Math.max(a[1], b[1]), Math.max(c[1], d[1])) >= Math.max(Math.min(a[1], b[1]), Math.min(c[1], d[1]));
     return false;
   };
   const blocked = (a: Point, b: Point): boolean => boxes.some(r => {
@@ -56,7 +57,8 @@ function separateRoutes(routes: Point[][], boxes: Rect[]): void {
 }
 
 function spreadPorts(layout: GraphLayout, edges: { src: number; dst: number }[]): void {
-  const occupied = new Map<string, Set<number>>();
+  interface Port { end: Point; next: Point; axis: 0 | 1; lo: number; hi: number }
+  const groups = new Map<string, Port[]>();
   layout.edges.forEach((e, i) => {
     if (e.loop) return;
     if (e.points.length === 2) {
@@ -74,20 +76,53 @@ function spreadPorts(layout: GraphLayout, edges: { src: number; dst: number }[])
       const axis = vertical ? 0 : 1;
       const side = vertical ? (end[1] <= r.y ? 'top' : 'bottom') : (end[0] <= r.x ? 'left' : 'right');
       const key = `${id}:${side}`;
-      const used = occupied.get(key) ?? new Set<number>();
-      occupied.set(key, used);
+      const ports = groups.get(key) ?? [];
+      groups.set(key, ports);
       const lo = (vertical ? r.x : r.y) + 1;
-      const hi = lo + (vertical ? r.w : r.h) - 3;
-      let at = end[axis];
-      for (let gap = 0; gap <= hi - lo; gap++) {
-        const free = [at + gap, at - gap].find(p => p >= lo && p <= hi && !used.has(p));
-        if (free !== undefined) { at = free; break; }
-      }
-      used.add(at);
-      end[axis] = at;
-      next[axis] = at;
+      ports.push({ end, next, axis, lo, hi: lo + (vertical ? r.w : r.h) - 3 });
     }
   });
+  for (const ports of groups.values()) {
+    const { axis, lo, hi } = ports[0];
+    ports.sort((a, b) => a.end[axis] - b.end[axis]);
+    const start = ports.length === 1 ? Math.max(lo, Math.min(hi, ports[0].end[axis])) : lo + Math.floor((hi - lo - 2 * (ports.length - 1)) / 2);
+    ports.forEach((p, i) => { p.end[axis] = p.next[axis] = start + i * 2; });
+  }
+}
+
+function spaceLanes(layout: GraphLayout): void {
+  const insert = (axis: 0 | 1, cut: number) => {
+    layout.nodes.forEach(r => {
+      const start = axis === 0 ? r.x : r.y;
+      const size = axis === 0 ? r.w : r.h;
+      if (start >= cut) { if (axis === 0) r.x++; else r.y++; }
+      else if (start + size > cut) { if (axis === 0) r.w++; else r.h++; }
+    });
+    layout.edges.forEach(e => {
+      e.points.forEach(p => { if (p[axis] >= cut) p[axis]++; });
+      if (e.label && e.label[axis] >= cut) e.label[axis]++;
+    });
+  };
+  for (let pass = 0; pass < 100; pass++) {
+    let gap: { axis: 0 | 1; cut: number } | undefined;
+    for (let i = 0; i < layout.edges.length && !gap; i++) {
+      const route = layout.edges[i].points;
+      for (let j = 0; j < i && !gap; j++) {
+        const other = layout.edges[j].points;
+        for (let k = 0; k + 1 < route.length && !gap; k++) {
+          const a = route[k], b = route[k + 1];
+          for (let l = 0; l + 1 < other.length; l++) {
+            const c = other[l], d = other[l + 1];
+            if (a[0] === b[0] && c[0] === d[0] && Math.abs(a[0] - c[0]) === 1 && Math.min(Math.max(a[1], b[1]), Math.max(c[1], d[1])) >= Math.max(Math.min(a[1], b[1]), Math.min(c[1], d[1]))) gap = { axis: 0, cut: Math.max(a[0], c[0]) };
+            if (a[1] === b[1] && c[1] === d[1] && Math.abs(a[1] - c[1]) === 1 && Math.min(Math.max(a[0], b[0]), Math.max(c[0], d[0])) >= Math.max(Math.min(a[0], b[0]), Math.min(c[0], d[0]))) gap = { axis: 1, cut: Math.max(a[1], c[1]) };
+            if (gap) break;
+          }
+        }
+      }
+    }
+    if (!gap) break;
+    insert(gap.axis, gap.cut);
+  }
 }
 
 function tightenRows(layout: GraphLayout, nodes: GraphNode[], texts: TextBlock[]): void {
@@ -118,6 +153,53 @@ function tightenRows(layout: GraphLayout, nodes: GraphNode[], texts: TextBlock[]
   layout.edges.forEach(e => { e.points.forEach(p => { p[1] = at(p[1]); }); if (e.label) e.label[1] = at(e.label[1]); });
 }
 
+function edgeLabels(layout: GraphLayout, texts: TextBlock[], nodes: GraphNode[]): (Point | undefined)[] {
+  const placed: Rect[] = [];
+  const intersects = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const segment = (a: Point, b: Point): Rect => ({ x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(a[0] - b[0]) + 1, h: Math.abs(a[1] - b[1]) + 1 });
+  return layout.edges.map((e, i) => {
+    const t = texts[i];
+    if (!e.label || !t.height || e.loop) return undefined;
+    const near: Point = [e.label[0] + (t.width >> 1), e.label[1] + (t.height >> 1)];
+    const candidates: { p: Point; score: number }[] = [];
+    for (let k = 0; k + 1 < e.points.length; k++) {
+      const a = e.points[k], b = e.points[k + 1];
+      const horizontal = a[1] === b[1];
+      const size = horizontal ? t.width + 4 : t.height + 2;
+      const length = horizontal ? Math.abs(a[0] - b[0]) : Math.abs(a[1] - b[1]);
+      if (length < size) continue;
+      const lo = Math.min(a[horizontal ? 0 : 1], b[horizontal ? 0 : 1]);
+      for (let at = lo + 2; at <= lo + length - size + 2; at++) {
+        const p: Point = horizontal ? [at, a[1] - (t.height >> 1)] : [a[0] - (t.width >> 1), at];
+        const box: Rect = { x: p[0] - 1, y: p[1], w: t.width + 2, h: t.height };
+        if (placed.some(r => intersects(box, r))) continue;
+        if (layout.nodes.some((r, j) => nodes[j].isGroup
+          ? [segment([r.x, r.y], [r.x + r.w - 1, r.y]), segment([r.x, r.y + r.h - 1], [r.x + r.w - 1, r.y + r.h - 1]), segment([r.x, r.y], [r.x, r.y + r.h - 1]), segment([r.x + r.w - 1, r.y], [r.x + r.w - 1, r.y + r.h - 1])].some(side => intersects(box, side))
+          : intersects(box, r))) continue;
+        if (layout.edges.some((route, j) => route.points.some((c, l) => l + 1 < route.points.length && (j !== i || l !== k) && intersects(box, segment(c, route.points[l + 1]))))) continue;
+        candidates.push({ p, score: (p[0] + t.width / 2 - near[0]) ** 2 + 4 * (p[1] + t.height / 2 - near[1]) ** 2 });
+      }
+    }
+    candidates.sort((a, b) => a.score - b.score);
+    const p = candidates[0]?.p ?? placeLabel(e.points, near, t.width, t.height);
+    placed.push({ x: p[0] - 1, y: p[1], w: t.width + 2, h: t.height });
+    return p;
+  });
+}
+
+function actorBounds(r: Rect, text: TextBlock, business: boolean | undefined, y: number): [number, number] {
+  const figureH = r.h - text.height - 2;
+  const row = y - r.y - 1;
+  if (row >= figureH) {
+    const w = displayWidth(text.lines[row - figureH] ?? '');
+    const x = r.x + 2 + Math.floor((r.w - 4 - w) / 2);
+    return [x, x + w - 1];
+  }
+  const cx = r.x + Math.floor(r.w / 2);
+  const arms = row === 1 || row === figureH - 1;
+  return [cx - (arms ? 1 : 0), cx + (arms || row === 0 && business ? 1 : 0)];
+}
+
 function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
   const graph = buildUsecaseGraph(model);
   const canvas = new Canvas();
@@ -139,7 +221,7 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
   const rows = graph.nodes.map(n => n.jsonRows?.map(r => ({ key: text(r.key), value: text(r.value) })) ?? []);
   const keyWidths = rows.map(rs => Math.max(0, ...rs.map(r => r.key.width)));
   const nodes: GraphNode[] = graph.nodes.map((n, i) => {
-    if (n.isGroup) return { w: 0, h: 0, isGroup: true, padX: 2, padTop: titles[i].height + 2 + (n.boundaryType === 'package' ? 1 : 0), padBottom: 2, minW: titles[i].width + 6 };
+    if (n.isGroup) return { w: 0, h: 0, isGroup: true, padX: 2, padTop: titles[i].height + 2, padBottom: 2, minW: titles[i].width + 6 };
     const actor = n.actorType !== undefined;
     const table = n.jsonRows !== undefined;
     const w = Math.max(7, texts[i].width + 4 + (n.business && !actor ? 2 : 0), table ? keyWidths[i] + Math.max(0, ...rows[i].map(r => r.value.width)) + 7 : 0);
@@ -168,15 +250,112 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
   }
   nodes.forEach((n, i) => {
     if (n.isGroup) return;
-    const degree = edges.filter(e => e.src !== e.dst && (e.src === i || e.dst === i)).length;
-    if (sideways) n.h = Math.max(n.h, degree + 2);
-    if (sideways && loops.has(i)) n.h = Math.max(n.h, degree + 2 + edges.filter(e => e.src === i && e.dst === i).reduce((sum, e) => sum + e.text.height + 3, 0));
+    const degree = Math.max(edges.filter(e => e.src !== e.dst && e.src === i).length, edges.filter(e => e.src !== e.dst && e.dst === i).length);
+    if (graph.nodes[i].actorType !== undefined) {
+      const total = edges.filter(e => e.src !== e.dst && (e.src === i || e.dst === i)).length;
+      const loopH = edges.filter(e => e.src === i && e.dst === i).reduce((sum, e) => sum + e.text.height + 3, 0);
+      n.h = Math.max(n.h, total * 2 + texts[i].height + 1, loopH ? loopH + texts[i].height + 4 : 0);
+    }
+    if (sideways) n.h = Math.max(n.h, degree * 2 + 1);
+    if (sideways && loops.has(i)) n.h = Math.max(n.h, degree * 2 + 1 + edges.filter(e => e.src === i && e.dst === i).reduce((sum, e) => sum + e.text.height + 3, 0));
     if (!sideways) n.w = Math.max(n.w, degree * 2 + 3);
   });
-  const layout = layoutGraph(nodes, edges.map(e => ({ ...e, labelW: e.text.width, labelH: e.text.height })), dir, { nodeSep: sideways ? 2 : 4, rankSep: sideways ? 7 : 3, edgeSep: 2 });
+  const layout = layoutGraph(nodes, edges.map(e => ({ ...e, labelW: e.text.width, labelH: e.text.height })), dir, { nodeSep: sideways ? 2 : 4, rankSep: sideways ? 7 : 3, edgeSep: 3 });
   spreadPorts(layout, edges);
   separateRoutes(layout.edges.map(e => e.points), layout.nodes.filter((_, i) => !nodes[i].isGroup));
+  // Put repeated return relationships around opposite sides of the drawing.
+  layout.edges.forEach((route, i) => {
+    const e = edges[i];
+    if (route.loop || !edges.slice(0, i).some(other => other.src === e.src && other.dst === e.dst)) return;
+    const a = layout.nodes[e.src], b = layout.nodes[e.dst];
+    if (!route.points.some(p => p[1] >= Math.max(a.y + a.h, b.y + b.h))) return;
+    const right = b.x > a.x;
+    const top = Math.min(...layout.nodes.map(r => r.y)) - 3;
+    const x = a.x + Math.floor(a.w / 2);
+    const side = right ? b.x + b.w + 2 : b.x - 3;
+    const y = b.y + Math.floor(b.h / 2);
+    route.points = [[x, a.y], [x, top], [side, top], [side, y], [right ? b.x + b.w : b.x - 1, y]];
+  });
+  separateRoutes(layout.edges.map(e => e.points), layout.nodes.filter((_, i) => !nodes[i].isGroup));
+  spaceLanes(layout);
+  graph.nodes.forEach((node, id) => {
+    if (node.actorType === undefined) return;
+    const r = layout.nodes[id];
+    const cx = r.x + Math.floor(r.w / 2);
+    const bodyBounds = (y: number) => actorBounds(r, texts[id], node.business, y);
+    const usedRows = new Map<boolean, number[]>();
+    const portY = (right: boolean): number => {
+      const used = usedRows.get(right) ?? [];
+      usedRows.set(right, used);
+      const figureH = r.h - texts[id].height - 2;
+      const choices: number[] = [];
+      for (let row = 1; row < figureH - 1; row += 2) choices.push(r.y + 1 + row);
+      const widest = texts[id].lines.findIndex(line => displayWidth(line) === texts[id].width);
+      if (widest >= 0) choices.push(r.y + 1 + figureH + widest);
+      const y = choices.find(y => used.every(other => Math.abs(y - other) >= 2)) ?? choices[0];
+      used.push(y);
+      return y;
+    };
+    let nth = 0;
+    layout.edges.forEach((route, i) => {
+      if (route.loop) return;
+      for (const source of [true, false]) {
+        if ((source ? edges[i].src : edges[i].dst) !== id) continue;
+        const points = source ? route.points : [...route.points].reverse();
+        const end = points[0], next = points[1];
+        if (end[0] === next[0]) {
+          const other = layout.nodes[source ? edges[i].dst : edges[i].src];
+          let right = other.x + other.w / 2 >= cx;
+          const slot = nth++;
+          let y = r.y + 2 + slot * 2;
+          const laneAt = (right: boolean) => right ? r.x + r.w + 1 + slot * 2 : r.x - 2 - slot * 2;
+          const blocked = (x: number) => layout.nodes.some((box, j) => j !== id && !nodes[j].isGroup && x >= box.x && x < box.x + box.w && Math.max(y, next[1]) >= box.y && Math.min(y, next[1]) < box.y + box.h);
+          if (blocked(laneAt(right)) && !blocked(laneAt(!right))) right = !right;
+          y = portY(right);
+          const bounds = bodyBounds(y);
+          const x = right ? bounds[1] : bounds[0];
+          let lane = laneAt(right);
+          while (layout.nodes.some((box, j) => nodes[j].isGroup && Math.max(y, next[1]) >= box.y && Math.min(y, next[1]) < box.y + box.h && (Math.abs(lane - box.x) < 2 || Math.abs(lane - (box.x + box.w - 1)) < 2))) lane += right ? 1 : -1;
+          points.splice(0, 1, [x + (source ? 0 : right ? 1 : -1), y], [lane, y], [lane, next[1]]);
+        } else {
+          const right = next[0] > cx;
+          end[1] = next[1] = portY(right);
+          const bounds = bodyBounds(end[1]);
+          end[0] = (right ? bounds[1] : bounds[0]) + (source ? 0 : right ? 1 : -1);
+        }
+        route.points = source ? points : points.reverse();
+      }
+    });
+  });
+  layout.edges.forEach(e => {
+    const points: Point[] = [];
+    for (const p of e.points) {
+      if (points.length && points[points.length - 1][0] === p[0] && points[points.length - 1][1] === p[1]) continue;
+      const n = points.length;
+      if (n > 1 && (points[n - 2][0] === points[n - 1][0] && p[0] === points[n - 1][0] || points[n - 2][1] === points[n - 1][1] && p[1] === points[n - 1][1])) points[n - 1] = p;
+      else points.push(p);
+    }
+    e.points = points;
+  });
+  separateRoutes(layout.edges.map(e => e.points), layout.nodes.filter((_, i) => !nodes[i].isGroup));
+  spaceLanes(layout);
+  graph.nodes.forEach((node, id) => {
+    if (node.actorType === undefined) return;
+    const r = layout.nodes[id], cx = r.x + Math.floor(r.w / 2);
+    layout.edges.forEach((route, i) => {
+      if (route.loop) return;
+      for (const source of [true, false]) {
+        if ((source ? edges[i].src : edges[i].dst) !== id) continue;
+        const end = source ? route.points[0] : route.points[route.points.length - 1];
+        const next = source ? route.points[1] : route.points[route.points.length - 2];
+        const right = next[0] > cx;
+        const [left, last] = actorBounds(r, texts[id], node.business, end[1]);
+        end[0] = (right ? last : left) + (source ? 0 : right ? 1 : -1);
+      }
+    });
+  });
   tightenRows(layout, nodes, edges.map(e => e.text));
+  const labels = edgeLabels(layout, edges.map(e => e.text), nodes);
   const groups = graph.nodes.map((n, i) => n.isGroup ? i : -1).filter(i => i >= 0);
   for (const i of groups) {
     const r = layout.nodes[i];
@@ -187,16 +366,18 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
     if (n.isGroup) return;
     const r = layout.nodes[i];
     const actor = n.actorType !== undefined;
-    canvas.box(r.x, r.y, r.w, r.h, { round: n.shape === 'usecaseEllipse' || n.shape === 'usecaseBusiness' });
-    const contentH = texts[i].height + (actor ? 3 : 0);
+    if (!actor) canvas.box(r.x, r.y, r.w, r.h, { round: n.shape === 'usecaseEllipse' || n.shape === 'usecaseBusiness' });
+    const figureH = actor ? r.h - texts[i].height - 2 : 0;
+    const contentH = texts[i].height + figureH;
     let y = r.y + 1 + (n.jsonRows ? 0 : Math.floor((r.h - 2 - contentH) / 2));
     if (actor) {
       const cx = r.x + Math.floor(r.w / 2);
       canvas.put(cx, y, n.actorType === 'awesome' ? '●' : '○');
       if (n.business) canvas.put(cx + 1, y, '/');
+      canvas.segment(cx, y + 1, cx, y + figureH - 2);
       canvas.text(cx - 1, y + 1, n.actorType === 'awesome' ? '▄█▄' : n.actorType === 'hollow' ? '╭┼╮' : '─┼─');
-      canvas.text(cx - 1, y + 2, '╱ ╲');
-      y += 3;
+      canvas.text(cx - 1, y + figureH - 1, '╱ ╲');
+      y += figureH;
     }
     texts[i].lines.forEach((line, j) => canvas.textIn(r.x + 2, y + j, r.w - 4 - (n.business && !actor ? 2 : 0), line));
     if (n.business && !actor) canvas.put(r.x + r.w - 3, y, '/');
@@ -214,7 +395,6 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
         canvas.segment(r.x, y, r.x + r.w - 1, y);
       }
     }
-    if (n.shape === 'note') canvas.put(r.x + r.w - 1, r.y, '╲');
   });
   for (const i of groups) {
     const r = layout.nodes[i];
@@ -224,18 +404,13 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
       const free = titles[i].lines.every((_, j) => Array.from({ length: w + 2 }, (_, k) => at + k - 1).every(k => !(canvas.armsAt(k, r.y + j) & (Arm.Up | Arm.Down))));
       if (free) { x = at; break; }
     }
-    if (graph.nodes[i].boundaryType === 'package') {
-      const tab = Math.min(r.w - 2, x - r.x + titles[i].width + 2);
-      canvas.segment(r.x, r.y + titles[i].height, r.x + tab, r.y + titles[i].height);
-      canvas.segment(r.x + tab, r.y, r.x + tab, r.y + titles[i].height);
-    }
     titles[i].lines.forEach((line, j) => canvas.text(x, r.y + j, ` ${line} `, { role: 'title' }));
   }
   layout.edges.forEach((e, i) => { if (!e.loop) finishEdge(canvas, e.points, edges[i].style); });
   layout.edges.forEach((e, i) => {
     const d = edges[i];
     if (e.loop || !e.label || !d.text.height) return;
-    const [x, y] = placeLabel(e.points, [e.label[0] + (d.text.width >> 1), e.label[1] + (d.text.height >> 1)], d.text.width, d.text.height);
+    const [x, y] = labels[i]!;
     canvas.clear(x - 1, y, d.text.width + 2, d.text.height);
     d.text.lines.forEach((line, j) => canvas.textIn(x, y + j, d.text.width, line, 'center', { role: 'label' }));
   });
@@ -256,13 +431,16 @@ function render(model: UsecaseModel, ctx: AsciiContext): Canvas {
       });
       loopRows.set(d.src, used);
     }
-    let y = r.y + 1;
+    const actor = graph.nodes[d.src].actorType !== undefined;
+    let y = r.y + (actor ? 2 : 1);
     while (used.has(y)) y++;
     let back = y + d.text.height + 2;
     while (used.has(back)) back++;
     for (let at = y; at <= back; at++) used.add(at);
     const right = r.x + r.w - 1, out = right + 3 + nth * 4;
-    const pts: Point[] = [[right, y], [out, y], [out, back], [right + 1, back]];
+    const start = actor ? actorBounds(r, texts[d.src], graph.nodes[d.src].business, y)[1] : right;
+    const end = actor ? actorBounds(r, texts[d.src], graph.nodes[d.src].business, back)[1] : right;
+    const pts: Point[] = [[start, y], [out, y], [out, back], [end + 1, back]];
     drawEdgeLine(canvas, pts, d.style);
     finishEdge(canvas, pts, d.style);
     d.text.lines.forEach((line, j) => canvas.text(out + 2, y + 1 + j, line));
