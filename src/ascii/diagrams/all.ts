@@ -3,6 +3,7 @@ import type { AsciiDiagram } from '../core.js';
 import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
 import { classDiagram } from './class.js';
+import { er } from './er.js';
 import { gantt } from './gantt.js';
 import { git } from './git.js';
 import { state } from './state.js';
@@ -11,6 +12,7 @@ export const all: AsciiDiagram[] = [
   flowchart,
   sequence,
   classDiagram,
+  er,
   gantt,
   git,
   state,
