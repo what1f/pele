@@ -58,7 +58,11 @@ function titleOf(model: object): string {
 // 标题居中放在图的上方，空一行。
 function withTitle(canvas: Canvas, title: string, maxWidth: number): Canvas {
   const b = canvas.bounds();
-  if (title === '' || b === undefined) return canvas;
+  if (title === '') return canvas;
+  if (b === undefined) {
+    canvas.text(0, 0, truncate(title, maxWidth), { role: 'title' });
+    return canvas;
+  }
   const text = truncate(title, Math.min(maxWidth, Math.max(b.w, displayWidth(title))));
   const out = new Canvas();
   const tw = displayWidth(text);

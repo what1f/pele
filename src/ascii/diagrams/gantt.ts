@@ -26,6 +26,7 @@ function render(model: GanttDb, ctx: AsciiContext): Canvas {
   const canvas = new Canvas();
   // ASCII has no clock option. Anchor partial dates and implicit starts, and omit the live today marker.
   const tasks = model.getTasks(new Date(2000, 0, 1));
+  if (tasks.length === 0) return canvas;
   const dated = tasks.filter(scheduled);
   const config = (ctx.config.gantt ?? {}) as Record<string, unknown>;
   const setting = (key: string): string => typeof config[key] === 'string' ? config[key] as string : '';
@@ -170,7 +171,6 @@ function render(model: GanttDb, ctx: AsciiContext): Canvas {
     else canvas.text(x0, row, '█'.repeat(x1 - x0 + 1), { role: task.crit ? 'accent' : 'series0' });
   }
   if (dated.length) axis(bottom, false);
-  if (!canvas.bounds()) canvas.text(0, 0, '─');
   return canvas;
 }
 
