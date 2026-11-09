@@ -22,7 +22,8 @@ export { displayWidth } from './text/width.js';
 
 export function renderAscii(source: string, options: AsciiOptions = {}): AsciiResult {
   const model = parse(source, { config: options.config });
-  const type = model.type;
+  // Swimlanes reuse FlowDb, whose type is flowchart. The parser retains the authored type.
+  const type = model.mermaidType === 'swimlane' ? 'swimlane' : model.type;
   const renderer = rendererFor(type);
   if (renderer === undefined) throw new AsciiError(`No ASCII renderer for "${type}" diagrams yet.`, 'unsupported', type);
   const extra = options.config;

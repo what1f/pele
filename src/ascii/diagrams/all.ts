@@ -1,5 +1,7 @@
 // 所有已实现的字符渲染器。新增一种图：写 ./<type>.ts 导出一个 AsciiDiagram，再加到这里。
 import type { AsciiDiagram } from '../core.js';
+import { agentflow } from './agentflow.js';
+import { swimlane } from './swimlane.js';
 import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
 import { architecture } from './architecture.js';
@@ -31,6 +33,8 @@ import { venn } from './venn.js';
 import { xychart } from './xychart.js';
 
 export const all: AsciiDiagram[] = [
+  agentflow,
+  swimlane,
   flowchart,
   sequence,
   architecture,

@@ -127,9 +127,9 @@ export function alignPorts(wires: Wire[]): void {
 }
 
 // Fixed ports and manually placed grids cannot use the layered graph router.
-export function gridWires(canvas: Canvas, boxes: Rect[], frames: Rect[], titles: Rect[], wires: Wire[]): () => void {
+export function gridWires(canvas: Canvas, boxes: Rect[], frames: Rect[], titles: Rect[], wires: Wire[], options: { tightFrames?: boolean } = {}): () => void {
   const occupied = new Map<string, number>();
-  const blocked = [...boxes, ...titles.map((r) => ({ x: r.x - 1, y: r.y - 1, w: r.w + 2, h: r.h + 2 }))];
+  const blocked = [...boxes, ...titles.map((r) => options.tightFrames ? r : ({ x: r.x - 1, y: r.y - 1, w: r.w + 2, h: r.h + 2 }))];
   let owner = -1;
   const approaches = new Map<string, Set<number>>();
   wires.forEach((wire, i) => {
@@ -245,7 +245,7 @@ export function gridWires(canvas: Canvas, boxes: Rect[], frames: Rect[], titles:
           )
             continue;
           if (
-            [...boxes, ...frames].some((r) =>
+            [...boxes, ...(options.tightFrames ? [] : frames)].some((r) =>
               d < 2
                 ? (y === r.y - 1 || y === r.y + r.h) && x >= r.x && x < r.x + r.w
                 : (x === r.x - 1 || x === r.x + r.w) && y >= r.y && y < r.y + r.h,
@@ -253,7 +253,7 @@ export function gridWires(canvas: Canvas, boxes: Rect[], frames: Rect[], titles:
           )
             continue;
           if (
-            frames.some((r) =>
+            !options.tightFrames && frames.some((r) =>
               d < 2
                 ? (y === r.y + 1 || y === r.y + r.h - 2) && x > r.x && x < r.x + r.w - 1
                 : (x === r.x + 1 || x === r.x + r.w - 2) && y > r.y && y < r.y + r.h - 1,
