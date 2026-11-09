@@ -16,6 +16,8 @@ export interface GitCommit {
   branch: string;
   customType?: number;
   customId?: boolean;
+  customTags?: boolean;
+  cherryPickParent?: string;
 }
 
 export interface GitModel {
@@ -165,6 +167,7 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
     commit({ msg, id, type, tags }) {
       const commit: GitCommit = {
         id: id ? id : nextId(),
+        customId: !!id,
         message: msg,
         seq: seq++,
         type: type ?? commitType.NORMAL,
@@ -240,6 +243,8 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
         parents: head === null ? [] : [head.id, source.id],
         branch: current,
         type: commitType.CHERRY_PICK,
+        customTags: tags !== undefined,
+        cherryPickParent: parent,
         tags: tags
           ? tags.filter(Boolean)
           : [`cherry-pick:${source.id}${source.type === commitType.MERGE ? `|parent:${parent}` : ''}`],
