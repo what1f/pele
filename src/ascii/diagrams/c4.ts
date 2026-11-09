@@ -1,5 +1,6 @@
 import type { C4Model, C4Shape } from '../../diagrams/c4/types.js';
 import { PeleError } from '../../errors.js';
+import { label } from '../text/label.js';
 import type { AsciiDiagram } from '../core.js';
 import { cardText, drawCards, type Card, type CardLink } from '../draw/cards.js';
 
@@ -26,7 +27,7 @@ export const c4: AsciiDiagram<C4Model> = {
       form: 'kind' in e ? form(e as C4Shape) : undefined,
       sections: 'kind' in e
         ? [text(`«${String(e.kind).replace(/_/g, ' ')}»`), text(e.label), text(e.techn ? `[${e.techn}]` : undefined), text(e.descr)]
-        : [text(e.label), text(e.type ? `[${e.type}]` : undefined), text(e.descr)],
+        : [label(e.label), text(e.type ? `[${e.type}]` : undefined), text(e.descr)],
     }));
     const links: CardLink[] = model.rels.map((r, i) => {
       const src = r.fromAttr ? undefined : aliases.get(r.from);

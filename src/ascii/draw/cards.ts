@@ -10,7 +10,7 @@ export interface Card {
   parent?: number;
   group?: boolean;
   minWidth?: number;
-  headingSource?: TextBlock[];
+  headRoom?: number;
   form?: 'rect' | 'database' | 'queue' | 'person';
 }
 export interface CardLink {
@@ -22,7 +22,7 @@ export interface CardLink {
 }
 
 export function cardText(text: string | undefined, ctx: AsciiContext, markdown = false): TextBlock {
-  const width = ctx.compact ? 14 : 26;
+  const width = ctx.compact ? 13 : 26;
   const block = label(text, { maxWidth: width, markdown });
   const lines = block.lines.flatMap((line) => wrap(line, width));
   return { lines, width: Math.max(0, ...lines.map(displayWidth)), height: lines.length };
@@ -33,16 +33,13 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
     const parts = c.sections.filter((s) => s.height > 0);
     const width = Math.max(1, ...parts.map((s) => s.width));
     return c.group
-      ? { w: 0, h: 0, parent: c.parent, isGroup: true, minW: Math.max(width + 10, c.minWidth ?? 0), padX: ctx.compact ? 1 : 3, padTop: parts.reduce((h, s) => h + s.height, 0) + 2, padBottom: 2 }
+      ? { w: 0, h: 0, parent: c.parent, isGroup: true, minW: Math.max(width + 8, c.minWidth ?? 0), padX: ctx.compact ? 1 : 3, padTop: parts.reduce((h, s) => h + s.height, 0) + 2 + (c.headRoom ?? 0), padBottom: 2 }
       : { w: width + (c.form === 'queue' ? 6 : 4), h: (c.form === 'database' || c.form === 'person' ? 1 : 0) + parts.reduce((h, s) => h + s.height, 0) + Math.max(0, parts.length - 1) + 2, parent: c.parent };
   });
   cards.forEach((_, i) => {
     const loops = links.filter((l) => l.src === i && l.dst === i);
     if (!loops.length) return;
-    nodes[i].extraRight = Math.max(...loops.map((l) => l.text.width)) + 6;
-    const loopHeight = loops.reduce((h, l) => h + Math.max(5, l.text.height + 4), 0);
-    nodes[i].insetTop = loopHeight + 2;
-    nodes[i].h = Math.max(nodes[i].h, loopHeight + 8);
+    nodes[i].extraRight = Math.max(...loops.map((l) => l.text.width)) + 6 + 4 * (loops.length - 1);
   });
   const edges = links.map((l) => ({ src: l.src, dst: l.dst, labelW: l.text.width + 2, labelH: l.text.height }));
   if (ctx.compact && stack) {
@@ -66,18 +63,67 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
     if (!e.loop) return e.points;
     const l = links[i];
     const r = layout.nodes[l.src];
-    const offset = links.slice(0, i).filter((p) => p.src === l.src && p.dst === l.dst).reduce((h, p) => h + Math.max(5, p.text.height + 4), 0);
+    const nth = links.slice(0, i).filter((p) => p.src === l.src && p.dst === l.dst).length;
     const right = r.x + r.w - 1;
-    const out = right + 3;
-    const y = r.y + 1 + offset;
-    const bottom = y + Math.max(2, l.text.height + 1);
-    return [[right, y], [out, y], [out, bottom], [right + 1, bottom]];
+    if (nth % 2 === 0) {
+      const out = right + 3 + Math.floor(nth / 2) * 4;
+      return [[right, r.y + 1], [out, r.y + 1], [out, r.y + r.h - 2], [right + 1, r.y + r.h - 2]];
+    }
+    const x0 = r.x + r.w - 3;
+    const x1 = r.x + Math.max(2, Math.floor(r.w / 3));
+    const top = r.y - 5 - Math.floor(nth / 2) * 3;
+    const out = right + 6 + Math.floor(nth / 2) * 4;
+    return [[x0, r.y], [x0, r.y - 2], [out, r.y - 2], [out, top], [x1, top], [x1, r.y - 1]];
+
   });
   // Incoming and outgoing edges share the same port pool.
   const ports = new Map<string, number[]>();
+  const endpoint = (points: Point[], source: boolean): Point => {
+    if (source) return points[0];
+    const end = points[points.length - 1];
+    const before = points[points.length - 2];
+    return [end[0] + Math.sign(end[0] - before[0]), end[1] + Math.sign(end[1] - before[1])];
+  };
+  const portsClear = (path: Point[], index: number, others = routes): boolean => [true, false].every((source) => {
+    const p = endpoint(path, source);
+    const node = source ? links[index].src : links[index].dst;
+    return others.every((route, j) => j === index || [true, false].every((otherSource) => {
+      if ((otherSource ? links[j].src : links[j].dst) !== node) return true;
+      const q = endpoint(route, otherSource);
+      return Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) >= 2;
+    }));
+  });
+  const hitsNode = (path: Point[], index: number): boolean => path.slice(1).some((b, k) => {
+    const a = path[k];
+    return layout.nodes.some((r, node) => {
+      if (cards[node].group) return false;
+      const left = Math.max(Math.min(a[0], b[0]), r.x);
+      const right = Math.min(Math.max(a[0], b[0]), r.x + r.w - 1);
+      const top = Math.max(Math.min(a[1], b[1]), r.y);
+      const bottom = Math.min(Math.max(a[1], b[1]), r.y + r.h - 1);
+      if (left > right || top > bottom) return false;
+      if (left === right && top === bottom) {
+        const src = path[0];
+        if (node === links[index].src && left === src[0] && top === src[1]) return false;
+        const dst = endpoint(path, false);
+        if (node === links[index].dst && left === dst[0] && top === dst[1]) return false;
+      }
+      return true;
+    });
+  });
   routes.forEach((points, i) => {
+    if (!layout.edges[i].loop) return;
     for (const source of [true, false]) {
-      if (layout.edges[i].loop) continue;
+      const p = endpoint(points, source);
+      const q = source ? points[1] : points[points.length - 2];
+      const vertical = p[0] === q[0];
+      const key = `${links[i].src}:${vertical ? 'v' : 'h'}:${p[vertical ? 1 : 0]}`;
+      ports.set(key, [...(ports.get(key) ?? []), p[vertical ? 0 : 1]]);
+    }
+  });
+  routes.forEach((points, i) => {
+    if (layout.edges[i].loop) return;
+    for (const source of [true, false]) {
       const end = source ? 0 : points.length - 1;
       const next = source ? 1 : points.length - 2;
       const a = points[end];
@@ -89,19 +135,35 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
       const border = source ? a[fixed] : a[fixed] - Math.sign(b[fixed] - a[fixed]);
       const key = `${source ? links[i].src : links[i].dst}:${vertical ? 'v' : 'h'}:${border}`;
       const taken = ports.get(key) ?? [];
-      const free = (value: number): boolean => taken.every((p) => Math.abs(value - p) >= 2);
+      const free = (value: number): boolean => taken.every((p) => Math.abs(value - p) >= 3);
       const margin = cards[source ? links[i].src : links[i].dst].group ? 3 : 1;
       const low = vertical ? r.x + margin : r.y + 1 + (nodes[source ? links[i].src : links[i].dst].insetTop ?? 0);
       const high = vertical ? r.x + r.w - 1 - margin : r.y + r.h - 2;
-      let value = cards[source ? links[i].src : links[i].dst].group && vertical ? high : a[axis];
-      for (let offset = 0; !free(value) && offset < high - low + 1; offset++) {
-        const delta = Math.ceil((offset + 1) / 2) * (offset % 2 === 0 ? -1 : 1);
-        const candidate = (cards[source ? links[i].src : links[i].dst].group && vertical ? high : a[axis]) + delta;
-        if (candidate >= low && candidate <= high && free(candidate)) { value = candidate; break; }
-      }
+      const node = source ? links[i].src : links[i].dst;
+      const count = source ? 1 : links.filter((l) => l.dst === node && l.style.head !== 'none').length;
+      const slots = count > 1 && !cards[node].group && vertical
+        ? Array.from({ length: count }, (_, k) => low + Math.round((k + 1) * (high - low) / (count + 1))).filter(free)
+        : [];
+      const preferred = cards[node].group && vertical ? high : a[axis];
+      const candidates = [...slots.sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred)), preferred,
+        ...Array.from({ length: high - low + 1 }, (_, k) => low + k).sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred))];
+      const move = (value: number): Point[] => {
+        const moved = points.map((p): Point => [...p]);
+        if (moved.length === 2) {
+          const p: Point = [...moved[0]];
+          const q: Point = [...moved[1]];
+          p[fixed] = q[fixed] = Math.round((p[fixed] + q[fixed]) / 2);
+          moved.splice(1, 0, p, q);
+        }
+        moved[source ? 0 : moved.length - 1][axis] = value;
+        moved[source ? 1 : moved.length - 2][axis] = value;
+        return moved;
+      };
+      const value = candidates.find((v) => free(v) && !hitsNode(move(v), i)) ??
+        candidates.find((v) => taken.every((p) => Math.abs(v - p) >= 2) && !hitsNode(move(v), i)) ?? preferred;
       taken.push(value);
       ports.set(key, taken);
-      if (value !== a[axis] && points.length > 2) { a[axis] = value; b[axis] = value; }
+      if (value !== a[axis]) points.splice(0, points.length, ...move(value));
     }
   });
   // Align nearly coincident ports instead of introducing a one-cell dogleg.
@@ -117,7 +179,8 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
     if (x <= dst.x || x >= dst.x + dst.w - 1 || x <= src.x || x >= src.x + src.w - 1) return;
     if (routes.some((route, j) => j !== i && route.some((p) => Math.abs(p[0] - x) < 2 && (p[1] === a[1] || Math.abs(p[1] - b[1]) <= 1)))) return;
     if (layout.nodes.some((r, n) => n !== links[i].src && n !== links[i].dst && !cards[n].group && x >= r.x && x < r.x + r.w && Math.min(a[1], b[1]) < r.y + r.h && Math.max(a[1], b[1]) > r.y)) return;
-    routes[i] = [[x, a[1]], [x, b[1]]];
+    const straight: Point[] = [[x, a[1]], [x, b[1]]];
+    if (portsClear(straight, i) && !hitsNode(straight, i)) routes[i] = straight;
   });
   const simplify = (points: Point[]): Point[] => {
     const clean: Point[] = [];
@@ -159,6 +222,7 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
             const candidate = points.map((p): Point => [...p]);
             candidate[k][axis] += distance * sign;
             candidate[k + 1][axis] += distance * sign;
+            if (!portsClear(candidate, i) || hitsNode(candidate, i)) continue;
             if (!terminalFits(candidate[0], candidate[1], links[i].src, true) || !terminalFits(candidate[candidate.length - 1], candidate[candidate.length - 2], links[i].dst, false)) continue;
             const count = (path: Point[]): number => path.slice(1).filter((p, n) => nearFrame(path[n], p)).length;
             if (count(candidate) >= count(points)) continue;
@@ -201,6 +265,7 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
           candidate[k][axis] += distance * sign;
           candidate[k + 1][axis] += distance * sign;
           if (conflicts(candidate) >= conflicts(points)) continue;
+          if (!portsClear(candidate, i) || hitsNode(candidate, i)) continue;
           if (!terminalFits(candidate[0], candidate[1], links[i].src, true) || !terminalFits(candidate[candidate.length - 1], candidate[candidate.length - 2], links[i].dst, false)) continue;
           const blocked = candidate.slice(1).some((p, j) => {
             const q = candidate[j];
@@ -237,14 +302,72 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
       if (!blocked) { at = x; break; }
     }
     if (at === undefined) {
-      const minimum = ctx.compact ? 8 : 12;
-      const cap = Math.max(minimum, width - 2);
-      // Rewrap the original heading so repeated passes do not fragment words.
-      const narrowed = cards.map((c, n) => n !== i ? c : { ...c, minWidth: width <= minimum ? r.w + 8 : c.minWidth, headingSource: c.headingSource ?? c.sections, sections: (c.headingSource ?? c.sections).map((section) => {
-        const lines = section.lines.flatMap((line) => wrap(line, cap));
-        return { lines, width: Math.max(0, ...lines.map(displayWidth)), height: lines.length };
-      }) });
-      return drawCards(narrowed, links, dir, ctx, stack, rankGap);
+      const titleLeft = r.x + 2;
+      const titleRight = titleLeft + width + 3;
+      const candidateRoutes = routes.map((route) => route.map((p): Point => [...p]));
+      let clear = true;
+      // Earlier shifts in this pass already occupy their new ports.
+      const usable = (candidate: Point[], index: number): boolean => {
+        if (hitsNode(candidate, index) || !portsClear(candidate, index, candidateRoutes) || !terminalFits(candidate[0], candidate[1], links[index].src, true) || !terminalFits(candidate[candidate.length - 1], candidate[candidate.length - 2], links[index].dst, false)) return false;
+        return !candidate.slice(1).some((q, n) => {
+          const p = candidate[n];
+          if (nearFrame(p, q)) return true;
+          if (headings.some((box) => Math.max(p[0], q[0]) >= box.x && Math.min(p[0], q[0]) < box.x + box.w && Math.max(p[1], q[1]) >= box.y && Math.min(p[1], q[1]) < box.y + box.h)) return true;
+          if (layout.nodes.some((box, node) => !cards[node].group && Math.min(p[0], q[0]) < box.x + box.w - 1 && Math.max(p[0], q[0]) > box.x && Math.min(p[1], q[1]) < box.y + box.h - 1 && Math.max(p[1], q[1]) > box.y)) return true;
+          const keys = trackKeys(p, q);
+          return candidateRoutes.some((other, j) => j !== index && other.slice(1).some((b, k) => trackKeys(other[k], b).some((key) => keys.includes(key))));
+        });
+      };
+      for (let j = 0; j < routes.length && clear; j++) {
+        const route = candidateRoutes[j];
+        for (let k = 0; k + 1 < route.length; k++) {
+          const a = route[k];
+          const b = route[k + 1];
+          if (a[0] !== b[0] || a[0] < titleLeft - 1 || a[0] > titleRight || Math.max(a[1], b[1]) < r.y - 1 || Math.min(a[1], b[1]) > r.y + height) continue;
+          let shifted = false;
+          for (let x = titleRight + 1; x < r.x + r.w - 3; x++) {
+            const candidate = route.map((p): Point => [...p]);
+            candidate[k][0] = candidate[k + 1][0] = x;
+            if (!usable(candidate, j)) continue;
+            route[k][0] = route[k + 1][0] = x;
+            shifted = true;
+            break;
+          }
+          if (!shifted && card.headRoom) {
+            const above = r.y - 3;
+            const below = r.y + height + 3;
+            if (Math.min(a[1], b[1]) <= above && Math.max(a[1], b[1]) >= below) {
+              for (let x = titleRight + 1; x < r.x + r.w - 3; x++) {
+                const down = a[1] < b[1];
+                const enter = down ? above : below;
+                const leave = down ? below : above;
+                const detour: Point[] = [[a[0], enter], [x, enter], [x, leave], [b[0], leave]];
+                const candidate = [...route.slice(0, k + 1), ...detour, ...route.slice(k + 1)];
+                if (!usable(candidate, j)) continue;
+                route.splice(0, route.length, ...simplify(candidate));
+                shifted = true;
+                break;
+              }
+            }
+          }
+          if (!shifted) { clear = false; break; }
+        }
+      }
+      clear &&= !candidateRoutes.some((route) => route.slice(1).some((b, k) => {
+        const a = route[k];
+        return Math.max(a[0], b[0]) >= titleLeft - 1 && Math.min(a[0], b[0]) <= titleRight &&
+          Math.max(a[1], b[1]) >= r.y - 1 && Math.min(a[1], b[1]) <= r.y + height;
+      }));
+      if (clear) {
+        candidateRoutes.forEach((route, j) => { routes[j] = simplify(route); });
+        at = titleLeft;
+      }
+    }
+    if (at === undefined) {
+      const widened = cards.map((c, n) => n !== i ? c : card.headRoom
+        ? { ...c, minWidth: r.w + 1 }
+        : { ...c, headRoom: 3 });
+      return drawCards(widened, links, dir, ctx, stack, rankGap);
     }
     headingX.set(i, at);
     headings.push({ x: at - 1, y: r.y - 1, w: width + 4, h: height + 2 });
@@ -304,7 +427,9 @@ export function drawCards(cards: Card[], links: CardLink[], dir: Dir, ctx: Ascii
     if (!l.text.height) continue;
     const e = layout.edges[i];
     const points = routes[i];
-    const preferred: Point = e.loop ? [points[1][0] + 2, points[1][1]]
+    const preferred: Point = e.loop ? (points[0][1] === layout.nodes[l.src].y
+      ? [points[3][0] + 2, points[3][1]]
+      : [points[1][0] + 2, points[1][1]])
       : placeLabel(points, e.label ? [e.label[0] + (l.text.width >> 1), e.label[1] + (l.text.height >> 1)] : points[0], l.text.width, l.text.height);
     const candidates: Point[] = [preferred];
     for (let k = 1; k < points.length; k++) {
