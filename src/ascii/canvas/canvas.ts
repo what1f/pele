@@ -43,7 +43,8 @@ const CONT = '\0'; // 宽字符右半格的续位标记
 interface Cell {
   // 四个臂的线型，每臂 2 位：up 0-1、down 2-3、left 4-5、right 6-7。
   arms: number;
-  dashed: boolean;
+  // 哪些臂是虚线（Arm 的组合）。只有所有臂都是虚线时，这一格才画成虚线；实线压在虚线上时实线优先。
+  dash: number;
   round: boolean;
   ch: string | undefined;
   role: Role | undefined;
@@ -74,7 +75,7 @@ export class Canvas {
     }
     let c = row.get(x);
     if (!c && create) {
-      c = { arms: 0, dashed: false, round: false, ch: undefined, role: undefined };
+      c = { arms: 0, dash: 0, round: false, ch: undefined, role: undefined };
       row.set(x, c);
     }
     return c;
@@ -89,7 +90,8 @@ export class Canvas {
     const w = weightOf(style.stroke ?? 'light');
     const old = (c.arms >> shift) & 3;
     if (w > old) c.arms = (c.arms & ~(3 << shift)) | (w << shift);
-    if (style.dashed) c.dashed = true;
+    if (!style.dashed) c.dash &= ~arm;
+    else if (old === 0) c.dash |= arm;
     if (style.role && !c.role) c.role = style.role;
   }
 
@@ -153,7 +155,7 @@ export class Canvas {
     const c = this.cell(x, y);
     if (c) {
       c.arms = 0;
-      c.dashed = false;
+      c.dash = 0;
       c.round = false;
     }
   }
@@ -258,7 +260,7 @@ export class Canvas {
       for (const [x, c] of row) {
         const t = this.cell(x + dx, y + dy, true);
         t.arms = c.arms;
-        t.dashed = c.dashed;
+        t.dash = c.dash;
         t.round = c.round;
         t.ch = c.ch;
         t.role = c.role;
@@ -307,7 +309,7 @@ export class Canvas {
         const mask = this.armsAt(x, y);
         const h = Math.max((c.arms >> 4) & 3, (c.arms >> 6) & 3) as Weight;
         const v = Math.max(c.arms & 3, (c.arms >> 2) & 3) as Weight;
-        line += (ascii ? asciiLineGlyph : lineGlyph)(mask, h, v, c.dashed, c.round);
+        line += (ascii ? asciiLineGlyph : lineGlyph)(mask, h, v, (c.dash & mask) === mask, c.round);
       }
       out.push(line.trimEnd());
     }

@@ -28,4 +28,4 @@ Pele renders Mermaid text to SVG for Obsidian, themed with CSS custom properties
 - Fork-only feature: render a parsed model to terminal text. Read [ASCII.md](ASCII.md) before touching it.
 - One renderer per diagram in `src/ascii/diagrams/<type>.ts`, exported as an `AsciiDiagram` and listed in `src/ascii/diagrams/all.ts`. `flowchart.ts` is the reference.
 - Measure text with `displayWidth()`, never `.length`; wide characters take two cells.
-- Check results visually: `scripts/ascii-gallery.ts` over `tests/corpus/<type>-docs.json`, then `scripts/ascii-sheet.py` to PNG. No unit tests for ASCII output.
+- Follow the quality rules in ASCII.md (no overlaps, connected lines, compact, consistent symbols). Check results visually: `scripts/ascii-gallery.ts` over `tests/corpus/<type>-docs.json`, then `scripts/ascii-sheet.py` to PNG. No unit tests for ASCII output.
