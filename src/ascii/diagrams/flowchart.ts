@@ -11,7 +11,7 @@ import type { AsciiContext, AsciiDiagram } from '../core.js';
 import { drawEdgeLine, finishEdge, placeLabel, type EdgeStyle, type Marker } from '../draw/edges.js';
 import { drawShape, shapeKind, shapeSize, type ShapeKind } from '../draw/shapes.js';
 import { layoutGraph, type GraphEdge, type GraphNode, type Point } from '../layout/graph.js';
-import { label, oneLine, type TextBlock } from '../text/label.js';
+import { label, type TextBlock } from '../text/label.js';
 import { displayWidth, truncate } from '../text/width.js';
 
 // 节点文字超过这么多列就折行（Mermaid 默认 200px，约 25 个半角字符）。
@@ -50,7 +50,7 @@ export function renderFlowchart(db: FlowDb, ctx: AsciiContext, dirOverride?: Dir
   const gnodes: GraphNode[] = graph.nodes.map((n, i) => {
     const markdown = n.labelType === 'markdown';
     if (n.isGroup) {
-      const title = truncate(oneLine(n.label), Math.max(8, Math.min(40, ctx.maxWidth - 6)));
+      const title = truncate(label(n.label, { markdown }).lines.join(' '), Math.max(8, Math.min(40, ctx.maxWidth - 6)));
       titles[i] = title;
       texts[i] = label(undefined);
       kinds[i] = 'rect';
