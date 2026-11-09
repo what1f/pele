@@ -1,54 +1,69 @@
 import type { QuadrantModel, QuadrantText } from '../../diagrams/quadrant/db.js';
 import { Canvas } from '../canvas/canvas.js';
 import type { AsciiContext, AsciiDiagram } from '../core.js';
-import { chartNumber as num, chartText } from '../draw/chart.js';
+import { chartText } from '../draw/chart.js';
 import { label } from '../text/label.js';
-import { displayWidth } from '../text/width.js';
+import { displayWidth, wrap } from '../text/width.js';
 
 function render(model: QuadrantModel, ctx: AsciiContext): Canvas {
   const c = new Canvas();
-  const width = Math.max(24, Math.min(ctx.compact ? ctx.maxWidth : 76, 76));
-  const half = Math.floor((width - 3) / 2), right = half * 2 + 2, mid = half + 1;
-  const text = (t: QuadrantText | undefined, max: number) => label(t?.text, { markdown: t?.type === 'markdown', maxWidth: max });
-  let y = 0;
-  y += chartText(c, model.yAxisTop?.text, 0, y, width, model.yAxisTop?.type === 'markdown');
+  const width = Math.max(30, Math.min(ctx.maxWidth, ctx.compact ? 80 : 90));
+  const text = (t: QuadrantText | undefined, max: number) => label(t?.text, { markdown: t?.type === 'markdown' }).lines.flatMap(s => wrap(s, max));
+  const high = text(model.yAxisTop, ctx.compact ? 12 : 16), low = text(model.yAxisBottom, ctx.compact ? 12 : 16);
+  const left = Math.max(0, ...[...high, ...low].map(displayWidth)) + (high.length || low.length ? 2 : 0);
+  const half = Math.max(12, Math.floor((width - left - 3) / 2)), mid = left + half + 1, right = mid + half + 1;
   const qs = model.quadrants.map(t => text(t, half - 2));
-  const qh = Math.max(1, ...qs.map(t => t.height));
-  const top = y, center = top + qh + 10, bottom = center + qh + 10;
-  c.box(0, top, right + 1, bottom - top + 1, { fill: false });
-  c.segment(mid, top, mid, bottom);
-  c.segment(0, center, right, center);
+  const qh = Math.max(1, ...qs.map(t => t.length));
+  const center = qh + 9, bottom = center * 2;
+  c.box(left, 0, right - left + 1, bottom + 1, { fill: false });
+  c.segment(mid, 0, mid, bottom);
+  c.segment(left, center, right, center);
+  high.forEach((s, i) => c.text(0, i, s));
+  low.forEach((s, i) => c.text(0, bottom - low.length + 1 + i, s));
   [1, 0, 2, 3].forEach((q, i) => {
-    const left = i % 2 === 0 ? 1 : mid + 1;
-    const row = i < 2 ? top + 1 : center + 1;
-    qs[q].lines.forEach((s, k) => c.textIn(left + 1, row + k, half - 2, s));
+    const x = i % 2 === 0 ? left + 2 : mid + 2;
+    qs[q].forEach((s, k) => c.textIn(x, (i < 2 ? 1 : center + 1) + k, half - 2, s));
   });
-  // Points that share a terminal cell share a key; the key retains exact coordinates.
   const groups = new Map<string, { x: number; y: number; points: number[] }>();
   const keyWidth = displayWidth(String(model.points.length));
-  const slots = Math.max(1, Math.floor((half - 2) / (keyWidth + 1)));
   model.points.forEach((p, i) => {
-    const east = p.x >= 0.5, north = p.y >= 0.5;
-    const localX = east ? (p.x - 0.5) * 2 : p.x * 2;
-    const localY = north ? (1 - p.y) * 2 : (0.5 - p.y) * 2;
-    const x = (east ? mid : 0) + 2 + Math.round(localX * (slots - 1)) * (keyWidth + 1);
-    const py = (north ? top : center) + qh + 2 + Math.round(localY * 6);
-    const key = `${x},${py}`;
-    const group = groups.get(key) ?? { x, y: py, points: [] };
+    let x = left + 2 + Math.round(p.x * (right - left - 4));
+    let y = 2 + Math.round((1 - p.y) * (bottom - 4));
+    x = Math.min(x, right - keyWidth - 1);
+    if (x <= mid + 1 && x + keyWidth >= mid) x = p.x >= 0.5 ? mid + 2 : mid - keyWidth - 1;
+    if (y === center) y += p.y >= 0.5 ? -1 : 1;
+    if (y <= qh + 1) y = qh + 2;
+    if (y > center && y <= center + qh + 1) y = center + qh + 2;
+    const neighbor = [...groups.values()].find(g => g.y === y && (g.x < mid) === (x < mid) && Math.abs(g.x - x) <= keyWidth);
+    const key = neighbor ? `${neighbor.x},${neighbor.y}` : `${x},${y}`;
+    const group = groups.get(key) ?? { x, y, points: [] };
     group.points.push(i); groups.set(key, group);
   });
-  let next = bottom + 1;
-  next += chartText(c, model.yAxisBottom?.text, 0, next, width, model.yAxisBottom?.type === 'markdown');
-  const xl = text(model.xAxisLeft, half - 2), xr = text(model.xAxisRight, half - 2);
-  xl.lines.forEach((s, k) => c.text(0, next + k, s));
-  xr.lines.forEach((s, k) => c.textIn(mid + 1, next + k, half, s, 'right'));
-  next += Math.max(xl.height, xr.height) + 1;
-  [...groups.values()].forEach((group, i) => {
-    c.text(group.x, group.y, String(i + 1));
-    group.points.forEach(j => {
-      const p = model.points[j];
-      next += chartText(c, `${i + 1} ${label(p.text.text, { markdown: p.text.type === 'markdown' }).lines.join(' ')} (${num(p.x)}, ${num(p.y)})`, 0, next, width);
-    });
+  const entries = [...groups.values()];
+  entries.forEach(g => c.text(g.x, g.y, '●' + ' '.repeat(keyWidth - 1)));
+  const xl = text(model.xAxisLeft, half - 1), xr = text(model.xAxisRight, half - 1);
+  xl.forEach((s, i) => c.text(left, bottom + 1 + i, s));
+  xr.forEach((s, i) => c.textIn(mid + 2, bottom + 1 + i, half, s, 'right'));
+  let next = bottom + Math.max(xl.length, xr.length) + 2;
+  const clear = (x: number, y: number, w: number, h: number) => {
+    if (x <= left || x + w >= right || y < 1 || y + h > bottom) return false;
+    for (let row = y - 1; row <= y + h; row++) for (let col = x - 1; col <= x + w; col++) if (c.occupied(col, row)) return false;
+    return true;
+  };
+  entries.forEach((g, index) => {
+    const p = model.points[g.points[0]], lines = text(p.text, half - 3);
+    const w = Math.max(0, ...lines.map(displayWidth)), y = g.y - Math.floor((lines.length - 1) / 2);
+    const x = [g.x + keyWidth + 1, g.x - w - 1].find(x => clear(x, y, w, lines.length));
+    if (g.points.length === 1 && x !== undefined) lines.forEach((s, i) => c.text(x, y + i, s));
+    else {
+      const key = String(index + 1);
+      // A crowded cell uses one key for all of its labels.
+      c.text(g.x, g.y, key);
+      g.points.forEach(i => {
+        const p = model.points[i];
+        next += chartText(c, `${key} ${label(p.text.text, { markdown: p.text.type === 'markdown' }).lines.join(' ')}`, left, next, right - left + 1);
+      });
+    }
   });
   return c;
 }

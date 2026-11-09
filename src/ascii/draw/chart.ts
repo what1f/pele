@@ -31,3 +31,19 @@ export function chartLine(canvas: Canvas, a: readonly [number, number], b: reado
     previous = p;
   }
 }
+
+export function barText(length: number, width: number): string {
+  const units = Math.max(0, Math.min(width * 8, Math.round(length * 8)));
+  const full = Math.floor(units / 8), tail = units % 8;
+  return '█'.repeat(full) + (tail ? '▏▎▍▌▋▊▉'[tail - 1] : '');
+}
+
+export function chartColumn(canvas: Canvas, x: number, base: number, tip: number, width: number): void {
+  const height = Math.abs(tip - base), full = Math.floor(height + 1e-9);
+  const part = Math.round((height - full) * 8);
+  const up = tip <= base;
+  for (let col = 0; col < width; col++) {
+    for (let row = 1; row <= full; row++) canvas.put(x + col, base + (up ? -row : row), '█');
+    if (part) canvas.put(x + col, base + (up ? -full - 1 : full + 1), up ? '▁▂▃▄▅▆▇█'[part - 1] : part <= 4 ? '▀' : '█');
+  }
+}

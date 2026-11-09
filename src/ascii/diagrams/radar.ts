@@ -1,56 +1,53 @@
 import type { RadarModel } from '../../diagrams/radar/model.js';
 import { Canvas } from '../canvas/canvas.js';
 import type { AsciiContext, AsciiDiagram } from '../core.js';
-import { chartLine, chartNumber as num, chartText, fraction } from '../draw/chart.js';
-import { displayWidth } from '../text/width.js';
+import { barText, chartNumber as num, fraction } from '../draw/chart.js';
+import { label } from '../text/label.js';
+import { displayWidth, wrap } from '../text/width.js';
 
 function render(model: RadarModel, ctx: AsciiContext): Canvas {
   const c = new Canvas();
-  const width = Math.max(18, Math.min(ctx.compact ? ctx.maxWidth : 68, 68));
-  const rx = Math.max(6, Math.floor((width - 12) / 2)), ry = ctx.compact ? 8 : 10;
-  const cx = rx + 5, cy = ry + 1;
-  const units = model.axes.map((_, i) => {
-    const a = 2 * Math.PI * i / model.axes.length - Math.PI / 2;
-    return [Math.cos(a), Math.sin(a)] as const;
-  });
-  const min = model.options.min;
-  const values = model.curves.flatMap(curve => curve.entries).filter(Number.isFinite);
-  const max = model.options.max ?? Math.max(min, ...values);
-  let top = 0;
-  const panels = model.curves.length ? model.curves : [undefined];
-  for (const curve of panels) {
-    if (top) top++;
-    if (curve && model.options.showLegend) top += chartText(c, curve.label, 0, top, width);
-    const origin = top;
-    const at = (u: readonly [number, number], r: number): [number, number] => [Math.round(cx + rx * u[0] * r), Math.round(origin + cy + ry * u[1] * r)];
-    for (let t = 1; t <= model.options.ticks; t++) {
-      const r = t / model.options.ticks;
-      if (model.options.graticule === 'circle') {
-        const n = Math.ceil(rx * 8);
-        for (let j = 0; j < n; j++) { const a = 2 * Math.PI * j / n; const p = at([Math.cos(a), Math.sin(a)], r); c.put(p[0], p[1], '·'); }
-      } else units.forEach((u, i) => chartLine(c, at(u, r), at(units[(i + 1) % units.length], r), '·'));
-    }
-    units.forEach(u => chartLine(c, [cx, origin + cy], at(u, 1), '·'));
-    if (curve && curve.entries.length === units.length) {
-      const shape = new Canvas();
-      const points = units.map((u, i) => at(u, fraction(curve.entries[i], min, max)));
-      points.forEach((p, i) => chartLine(shape, p, points[(i + 1) % points.length]));
-      points.forEach(p => shape.put(p[0], p[1], '●'));
-      c.blit(shape, 0, 0);
-    }
-    units.forEach((u, i) => {
-      const p = at(u, 1.15), text = String(i + 1);
-      let y = p[1], x = Math.max(0, Math.min(width - displayWidth(text), p[0] - Math.floor(displayWidth(text) / 2)));
-      while (Array.from({ length: displayWidth(text) + 2 }, (_, k) => c.occupied(x + k - 1, y)).some(Boolean)) y++;
-      c.text(x, y, text);
+  const available = Math.min(ctx.maxWidth, 104);
+  const max = model.options.max ?? Math.max(model.options.min, ...model.curves.flatMap(curve => curve.entries));
+  const amount = (value: number) => max === model.options.min ? 0 : fraction(value, model.options.min, max);
+  const axisWidth = Math.min(ctx.compact ? 12 : 20, Math.max(2, ...model.axes.map(a => label(a.label).width)));
+  const names = model.curves.map(curve => label(curve.label).lines.flatMap(s => wrap(s, 20)));
+  const numberWidth = Math.max(1, ...model.curves.flatMap(curve => curve.entries.map(v => displayWidth(num(v)))));
+  const barWidth = ctx.compact ? 12 : 18;
+  const column = Math.max(barWidth + numberWidth + 2, ...names.flat().map(displayWidth));
+  const grouped = axisWidth + 2 + model.curves.length * (column + 3) - 3 <= available;
+  const axisLines = model.axes.map(a => label(a.label).lines.flatMap(s => wrap(s, axisWidth)));
+  if (grouped) {
+    let y = Math.max(0, ...names.map(n => n.length));
+    names.forEach((lines, i) => lines.forEach((s, k) => c.textIn(axisWidth + 2 + i * (column + 3), k, column, s)));
+    if (y) y++;
+    model.axes.forEach((_, i) => {
+      axisLines[i].forEach((s, k) => c.text(0, y + k, s));
+      model.curves.forEach((curve, j) => {
+        if (curve.entries.length !== model.axes.length) return;
+        const x = axisWidth + 2 + j * (column + 3), value = curve.entries[i];
+        c.text(x, y, barText(amount(value) * barWidth, barWidth));
+        c.textIn(x + barWidth + 1, y, numberWidth, num(value), 'right');
+      });
+      y += Math.max(1, axisLines[i].length);
     });
-    top = (c.bounds()?.y ?? 0) + (c.bounds()?.h ?? 0) + 1;
-    // Numeric scale stays outside the plot, so it never hides a curve or spoke.
-    const scale = Array.from({ length: model.options.ticks + 1 }, (_, i) => num(min * (1 - i / Math.max(1, model.options.ticks)) + max * i / Math.max(1, model.options.ticks)));
-    top += chartText(c, scale.join(' · '), 0, top, width);
+  } else {
+    const nameWidth = Math.max(2, Math.min(20, Math.floor(available / 3), Math.max(2, ...names.flat().map(displayWidth))));
+    const span = Math.max(2, Math.min(24, available - nameWidth - numberWidth - 6));
+    let y = 0;
     model.axes.forEach((axis, i) => {
-      const value = curve?.entries.length === units.length ? curve.entries[i] : undefined;
-      top += chartText(c, `${i + 1} ${axis.label}${value !== undefined ? `: ${num(value)}` : ''}`, 0, top, width);
+      label(axis.label).lines.flatMap(s => wrap(s, Math.max(2, available))).forEach(s => c.text(0, y++, s));
+      model.curves.forEach(curve => {
+        const lines = label(curve.label).lines.flatMap(s => wrap(s, nameWidth));
+        lines.forEach((s, k) => c.text(2, y + k, s));
+        if (curve.entries.length === model.axes.length) {
+          const value = curve.entries[i];
+          c.text(nameWidth + 4, y, barText(amount(value) * span, span));
+          c.textIn(nameWidth + span + 5, y, numberWidth, num(value), 'right');
+        }
+        y += Math.max(1, lines.length);
+      });
+      y++;
     });
   }
   return c;
