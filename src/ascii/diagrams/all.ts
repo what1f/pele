@@ -2,6 +2,9 @@
 import type { AsciiDiagram } from '../core.js';
 import { flowchart } from './flowchart.js';
 import { sequence } from './sequence.js';
+import { sankey } from './sankey.js';
+import { venn } from './venn.js';
+import { cynefin } from './cynefin.js';
 import { architecture } from './architecture.js';
 import { block } from './block.js';
 import { classDiagram } from './class.js';
@@ -18,6 +21,9 @@ import { usecase } from './usecase.js';
 export const all: AsciiDiagram[] = [
   flowchart,
   sequence,
+  sankey,
+  venn,
+  cynefin,
   architecture,
   block,
   classDiagram,
