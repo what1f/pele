@@ -276,19 +276,16 @@ function render(model: SequenceModel, ctx: AsciiContext): Canvas {
       const self = a === b;
       const aDepth = atLevel[i][col(m.from)];
       let bDepth = atLevel[i][col(m.to)];
-      for (let j = i + 1; j < model.messages.length; j++) {
-        const next = model.messages[j];
-        if (next.type === L.ACTIVE_START && next.from === m.to) bDepth++;
-        else if (next.type !== L.ACTIVE_END) break;
-      }
-      const direction = b.x >= a.x ? 1 : -1;
-      const source = a.x + (self || direction > 0 ? Math.max(0, aDepth - 1) : 0);
-      let target = b.x + (self || direction < 0 ? Math.max(0, bDepth - 1) : 0);
+      // Only the immediately following activation starts on this message's arrow row.
+      const next = model.messages[i + 1];
+      if (next?.type === L.ACTIVE_START && next.from === m.to) bDepth++;
+      const source = a.x + Math.max(0, aDepth - 1);
+      let target = b.x + Math.max(0, bDepth - 1);
       if (b.birth === i) {
         actor(b, lineY - b.h + 2);
         target += a.x < b.x ? -Math.floor(b.w / 2) : Math.ceil(b.w / 2) - 1;
       }
-      const dir = target > a.x ? 1 : -1;
+      const dir = target > source ? 1 : -1;
       if (self) canvas.path([[source, e.y], [Math.max(source, target) + 4, e.y], [Math.max(source, target) + 4, lineY], [target + (style.head === 'none' ? 0 : 1), lineY]], style);
       else canvas.segment(source, lineY, target - (style.head === 'none' ? 0 : dir), lineY, style);
       if (style.head !== 'none') canvas.put(self ? target + 1 : target - dir, lineY, markerGlyph(style.head, self || dir < 0 ? 'left' : 'right'));

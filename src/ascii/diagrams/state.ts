@@ -97,7 +97,8 @@ function route(
         }
       }
       for (const nd of [d, (d + 1) % 4, (d + 3) % 4]) {
-        if (nd !== d && (canvas.armsAt(x, y) || roots.has(k))) continue;
+        // Candidate ports are alternatives, not occupied tracks.
+        if (nd !== d && canvas.armsAt(x, y)) continue;
         const [dx, dy] = STEPS[nd];
         const nx = x + dx,
           ny = y + dy;
@@ -312,6 +313,26 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
         if (edge.label && edge.label[1] >= cut) edge.label[1] += delta;
       });
     });
+  // Concurrent regions share a starting row even when their contents have different heights.
+  if (!ctx.compact) {
+    const parents = new Set(nodes.flatMap((n, i) => n.shape === 'divider' ? [gn[i].parent ?? -1] : []));
+    for (const parent of parents) {
+      const regions = nodes.flatMap((n, i) => n.shape === 'divider' && gn[i].parent === parent ? [i] : []);
+      const anchors = regions.map(region => Math.min(...nodes.flatMap((_, i) => gn[i].parent === region ? [rects[i].y] : [])));
+      const top = Math.min(...anchors);
+      regions.forEach((region, k) => {
+        if (!Number.isFinite(anchors[k])) return;
+        const delta = top - anchors[k];
+        nodes.forEach((_, i) => {
+          for (let p = i; p >= 0; p = gn[p].parent ?? -1) {
+            if (p !== region) continue;
+            rects[i].y += delta;
+            break;
+          }
+        });
+      });
+    }
+  }
   const loopEdges = new Map<number, number[]>();
   ge.forEach((e, k) => {
     if (e.src !== e.dst) return;
@@ -484,6 +505,17 @@ export function renderState(db: StateDb, ctx: AsciiContext): Canvas {
             gapTop + Math.floor((gapBottom - gapTop - b.height) / 2),
           ]
         : (laid.edges[k].label ?? [r.x + r.w + 3, r.y + 1]);
+    if (!horizontal && target.y < r.y) {
+      const left = Math.max(r.x + (r.w > 2 ? 1 : 0), target.x + (target.w > 2 ? 1 : 0));
+      const right = Math.min(r.x + r.w - (r.w > 2 ? 2 : 1), target.x + target.w - (target.w > 2 ? 2 : 1));
+      // Keep the caption passage within both port spans when a straight connection fits.
+      if (left <= right) {
+        const center = near[0] - 1 + Math.floor((b.width + 2) / 2);
+        const delta = Math.max(left, Math.min(right, center)) - center;
+        const aligned = { x: near[0] + delta - 2, y: near[1] - 2, w: b.width + 4, h: b.height + 4 };
+        if (!occupied(aligned)) near[0] += delta;
+      }
+    }
     for (let radius = 0; radius < Math.max(board.w, board.h); radius++) {
       for (let dy = -radius; dy <= radius; dy++) {
         const dx = radius - Math.abs(dy);
