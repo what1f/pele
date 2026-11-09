@@ -10,10 +10,13 @@ import { er } from './er.js';
 import { gantt } from './gantt.js';
 import { git } from './git.js';
 import { ishikawa } from './ishikawa.js';
+import { journey } from './journey.js';
+import { kanban } from './kanban.js';
 import { mindmap } from './mindmap.js';
 import { railroad } from './railroad.js';
 import { requirement } from './requirement.js';
 import { state } from './state.js';
+import { timeline } from './timeline.js';
 import { treeView } from './treeView.js';
 import { usecase } from './usecase.js';
 
@@ -28,10 +31,13 @@ export const all: AsciiDiagram[] = [
   gantt,
   git,
   ishikawa,
+  journey,
+  kanban,
   mindmap,
   railroad,
   requirement,
   state,
+  timeline,
   treeView,
   usecase,
 ];
