@@ -18,7 +18,7 @@ interface Item {
   inertia?: boolean;
   caption?: Rect;
 }
-interface Line { points: Point[]; style: EdgeStyle; label?: string }
+interface Line { points: Point[]; style: EdgeStyle; label?: string; evolution?: Item }
 const key = (x: number, y: number) => `${x},${y}`;
 
 function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | undefined {
@@ -70,12 +70,34 @@ function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | und
   for (const x of stageXs) canvas.segment(x, 1, x, bottom, { dashed: true, role: 'muted' });
 
   const ink = new Set<string>();
+  const protectedInk = new Set<string>();
   const reserve = (r: Rect, pad = 0): void => {
-    for (let yy = r.y - pad; yy < r.y + r.h + pad; yy++) for (let xx = r.x - pad; xx < r.x + r.w + pad; xx++) ink.add(key(xx, yy));
+    for (let yy = r.y - pad; yy < r.y + r.h + pad; yy++) for (let xx = r.x - pad; xx < r.x + r.w + pad; xx++) { ink.add(key(xx, yy)); protectedInk.add(key(xx, yy)); }
   };
   for (const item of items) if (item.symbol) reserve({ x: item.x, y: item.y, w: item.inertia ? 2 : 1, h: 1 });
   const lines: Line[] = [];
-  const tracks: { x: number; top: number; bottom: number }[] = [];
+  interface Segment { horizontal: boolean; axis: number; lo: number; hi: number; target: Item }
+  const segments: Segment[] = [];
+  const split = (points: Point[], target: Item): Segment[] => points.slice(1).flatMap((b, i) => {
+    const a = points[i], horizontal = a[1] === b[1];
+    const lo = Math.min(a[horizontal ? 0 : 1], b[horizontal ? 0 : 1]);
+    const hi = Math.max(a[horizontal ? 0 : 1], b[horizontal ? 0 : 1]);
+    return hi > lo ? [{ horizontal, axis: a[horizontal ? 1 : 0], lo, hi, target }] : [];
+  });
+  // Only routes entering the same lower component may merge into a bus.
+  const canUse = (points: Point[], target: Item): boolean => split(points, target).every(a => segments.every(b => {
+    if (a.horizontal !== b.horizontal || Math.max(a.lo, b.lo) >= Math.min(a.hi, b.hi)) return true;
+    if (a.axis === b.axis) return a.target === b.target;
+    return a.horizontal || Math.abs(a.axis - b.axis) >= 2;
+  }));
+  const fanout = new Map<Item, number>(), fanin = new Map<Item, number>();
+  for (const link of model.links) {
+    const from = byId.get(link.source), to = byId.get(link.target);
+    if (!from || !to || from === to) continue;
+    const a = from.y < to.y ? from : to, b = a === from ? to : from;
+    fanout.set(a, (fanout.get(a) ?? 0) + 1);
+    fanin.set(b, (fanin.get(b) ?? 0) + 1);
+  }
   const departures = new Map<Item, number>();
   for (const l of model.links) {
     const from = byId.get(l.source), to = byId.get(l.target);
@@ -86,28 +108,43 @@ function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | und
     departures.set(a, nth + 1);
     const preferred = nth === 0 ? a.x : a.x + (nth % 2 ? -1 : 1) * Math.ceil(nth / 2) * 2;
     const candidates = [0, ...Array.from({ length: width }, (_, n) => [n + 1, -n - 1]).flat()];
-    const x = candidates.map(n => preferred + n).find(x => {
-      if (x < 2 || x >= width - 2 || stageXs.includes(x)) return false;
-      if (x !== a.x && Math.abs(x - a.x) < 2 || x !== b.x && Math.abs(x - b.x) < 2) return false;
-      if (b.inertia && x > b.x && x - b.x < 3) return false;
-      if (tracks.some(t => t.top < b.y && t.bottom > a.y && Math.abs(t.x - x) < 2)) return false;
-      if (items.some(i => i.symbol && i !== a && i !== b && i.y >= a.y && i.y <= b.y && (i.x === x || i.y === a.y && i.x >= Math.min(a.x, x) && i.x <= Math.max(a.x, x)))) return false;
-      return !evolved.some(t => t.source === a && x !== a.x && (x - a.x) * (t.target.x - a.x) > 0 || t.source === b && (x - b.x) * (t.target.x - b.x) > 0);
-    });
-    if (x === undefined) return undefined;
-    tracks.push({ x, top: a.y, bottom: b.y });
-    const points: Point[] = [[a.x + (a.inertia && x > a.x ? 1 : 0), a.y]];
-    if (x !== a.x) points.push([x, a.y]);
-    const end: Point = x === b.x ? [x, b.y - 1] : [b.x + (b.inertia && x > b.x ? 2 : -Math.sign(b.x - x)), b.y];
-    if (x !== b.x) points.push([x, b.y]);
-    points.push(end);
+    let points: Point[] | undefined;
+    for (const exit of [a.y, a.y + 2, a.y + 4]) {
+      if (exit >= b.y - 1) continue;
+      for (const x of candidates.map(n => preferred + n)) {
+        if (x < 2 || x >= width - 2 || stageXs.includes(x)) continue;
+        if (x !== a.x && Math.abs(x - a.x) < 2 || x !== b.x && Math.abs(x - b.x) < 2) continue;
+        if (b.inertia && x > b.x && x - b.x < 3) continue;
+        if ((fanout.get(b) ?? 0) > 1 && evolved.some(t => t.source === b) && x !== b.x) continue;
+        const above = (fanout.get(b) ?? 0) > 1 || (fanin.get(b) ?? 0) > 1 || evolved.some(t => t.source === b);
+        if (above && x !== b.x && Math.abs(x - b.x) < Math.ceil(text(b.raw).width / 2) + 2) continue;
+        if (evolved.some(t => t.source === a && exit === a.y && x !== a.x && (x - a.x) * (t.target.x - a.x) > 0 || t.source === b && (x - b.x) * (t.target.x - b.x) > 0)) continue;
+        const path: Point[] = [[a.x + (a.inertia && exit === a.y && x > a.x ? 1 : 0), a.y]];
+        if (exit !== a.y) path.push([a.x, exit]);
+        if (x !== a.x) path.push([x, exit]);
+        const end: Point = x === b.x ? [x, b.y - 1] : [b.x + (b.inertia && x > b.x ? 2 : -Math.sign(b.x - x)), b.y];
+        if (x !== b.x) path.push([x, b.y]);
+        path.push(end);
+        const pieces = split(path, b);
+        if (items.some(i => i.symbol && i !== a && i !== b && pieces.some(p => p.horizontal ? i.y === p.axis && i.x >= p.lo && i.x <= p.hi : i.x === p.axis && i.y >= p.lo && i.y <= p.hi))) continue;
+        if (!canUse(path, b)) continue;
+        points = path;
+        break;
+      }
+      if (points) break;
+    }
+    if (!points) return undefined;
+    segments.push(...split(points, b));
     const forward = l.flow === 'forward' || l.flow === 'bidirectional';
     const backward = l.flow === 'backward' || l.flow === 'bidirectional';
     lines.push({ points, label: l.label, style: { dashed: l.dashed, head: (a === from ? forward : backward) ? 'arrow' : 'none', tail: (a === from ? backward : forward) ? 'arrow' : 'none' } });
   }
   for (const { source, target } of evolved) {
     const sign = Math.sign(target.x - source.x);
-    lines.push({ points: [[source.x, source.y], [target.x - sign, target.y]], style: { dashed: true, head: 'arrow' } });
+    const points: Point[] = [[source.x, source.y], [target.x - sign, target.y]];
+    if (!canUse(points, target)) return undefined;
+    segments.push(...split(points, target));
+    lines.push({ points, style: { dashed: true, head: 'arrow' }, evolution: source });
   }
   for (const line of lines) {
     drawEdgeLine(canvas, line.points, line.style);
@@ -118,14 +155,15 @@ function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | und
       let [x, y] = a;
       for (;;) {
         ink.add(key(x, y));
+        if (!line.evolution) protectedInk.add(key(x, y));
         if (x === b[0] && y === b[1]) break;
         x += dx; y += dy;
       }
     }
   }
-  const free = (r: Rect): boolean => {
+  const free = (r: Rect, evolution?: Item): boolean => {
     if (r.x < 2 || r.x + r.w >= width - 1 || r.y < 2 || r.y + r.h > bottom) return false;
-    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x - 1; x <= r.x + r.w; x++) if (ink.has(key(x, y))) return false;
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x - 1; x <= r.x + r.w; x++) if (ink.has(key(x, y)) && (!evolution || y !== evolution.y || protectedInk.has(key(x, y)))) return false;
     return true;
   };
   const write = (block: TextBlock, r: Rect): void => {
@@ -145,7 +183,7 @@ function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | und
         for (let y = Math.min(a[1], b[1]) + 2; y + block.height < Math.max(a[1], b[1]); y++) for (const x of [a[0] + 2, a[0] - block.width - 1]) candidates.push({ x, y, w: block.width, h: block.height });
       }
     }
-    const r = candidates.find(free);
+    const r = candidates.find(r => free(r));
     if (!r) return undefined;
     write(block, r);
   }
@@ -158,12 +196,24 @@ function draw(model: WardleyModel, ctx: AsciiContext, gap: number): Canvas | und
     for (const room of [ctx.compact ? 14 : 22, 14, 10, 6]) {
       const block = text(item.raw, room);
       if (!block.height) { found = true; break; }
-      const candidates: Rect[] = [];
-      for (const dy of [0, 1 - block.height, -block.height - 1, 2, -block.height - 2, 3]) {
-        const xs = item.symbol ? [item.x + (item.inertia ? 3 : 2), item.x - block.width - 2, item.x - Math.floor(block.width / 2)] : [Math.min(width - block.width - 2, item.x), item.x - block.width - 2, ...Array.from({ length: width }, (_, n) => [item.x + n, item.x - n]).flat()];
-        for (const x of xs) candidates.push({ x, y: item.y + dy, w: block.width, h: block.height });
+      // A name can replace its own evolution run, never another edge.
+      const trend = evolved.find(t => t.source === item);
+      if (trend) {
+        const right = trend.target.x > item.x;
+        const r = { x: right ? item.x + (item.inertia ? 3 : 2) : item.x - block.width - 2, y: item.y + 1 - block.height, w: block.width, h: block.height };
+        const fits = right ? r.x + r.w + 2 < trend.target.x : r.x - 2 > trend.target.x;
+        if (fits && free(r, item)) {
+          write(block, r); item.caption = r; found = true; break;
+        }
       }
-      const r = candidates.find(free);
+      const candidates: Rect[] = [];
+      if (item.symbol) {
+        for (const dy of [0, 1 - block.height]) for (const x of [item.x + (item.inertia ? 3 : 2), item.x - block.width - 2]) candidates.push({ x, y: item.y + dy, w: block.width, h: block.height });
+        for (const dy of [-block.height, 1]) for (const x of [item.x - Math.floor(block.width / 2), item.x]) candidates.push({ x, y: item.y + dy, w: block.width, h: block.height });
+      } else {
+        for (const dy of [0, 1 - block.height, -block.height, 1]) for (const x of [Math.min(width - block.width - 2, item.x), item.x - block.width - 2, ...Array.from({ length: width }, (_, n) => [item.x + n, item.x - n]).flat()]) candidates.push({ x, y: item.y + dy, w: block.width, h: block.height });
+      }
+      const r = candidates.find(r => free(r));
       if (!r) continue;
       write(block, r); item.caption = r; found = true; break;
     }
