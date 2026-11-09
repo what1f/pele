@@ -50,11 +50,23 @@ function render(model: QuadrantModel, ctx: AsciiContext): Canvas {
     for (let row = y - 1; row <= y + h; row++) for (let col = x - 1; col <= x + w; col++) if (c.occupied(col, row)) return false;
     return true;
   };
-  entries.forEach((g, index) => {
+  const placements = entries.map((g, index) => {
     const p = model.points[g.points[0]], lines = text(p.text, half - 3);
     const w = Math.max(0, ...lines.map(displayWidth)), y = g.y - Math.floor((lines.length - 1) / 2);
-    const x = [g.x + keyWidth + 1, g.x - w - 1].find(x => clear(x, y, w, lines.length));
-    if (g.points.length === 1 && x !== undefined) lines.forEach((s, i) => c.text(x, y + i, s));
+    const tileLeft = g.x < mid ? left + 2 : mid + 2;
+    const tileRight = g.x < mid ? mid - 2 : right - 2;
+    const centered = Math.max(tileLeft, Math.min(tileRight - w + 1, g.x - Math.floor(w / 2)));
+    const candidates = [[g.x + keyWidth + 1, y], [g.x - w - 1, y], [centered, g.y - lines.length - 1], [centered, g.y + 2]];
+    const room = candidates.filter(([x, y]) => clear(x, y, w, lines.length)).length;
+    for (const gap of [2, 3]) candidates.push([centered, g.y - lines.length - gap - 1], [centered, g.y + gap + 1]);
+    const tileTop = g.y < center ? 1 : center + 1, tileBottom = g.y < center ? center - 1 : bottom - 1;
+    return { g, index, lines, w, candidates: candidates.filter(([, y]) => y >= tileTop && y + lines.length - 1 <= tileBottom), room };
+  });
+  // Place constrained labels before labels that have several free sides.
+  placements.sort((a, b) => a.room - b.room || a.index - b.index);
+  placements.forEach(({ g, index, lines, w, candidates }) => {
+    const at = candidates.find(([x, y]) => clear(x, y, w, lines.length));
+    if (g.points.length === 1 && at !== undefined) lines.forEach((s, i) => c.text(at[0], at[1] + i, s));
     else {
       const key = String(index + 1);
       // A crowded cell uses one key for all of its labels.
