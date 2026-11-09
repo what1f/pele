@@ -1,6 +1,6 @@
 import type { KanbanModel } from '../../diagrams/kanban/db.js';
 import type { AsciiDiagram } from '../core.js';
-import { cardColumns } from '../draw/cards.js';
+import { cardColumns } from '../draw/card-stack.js';
 
 export const kanban: AsciiDiagram<KanbanModel> = {
   type: 'kanban',
