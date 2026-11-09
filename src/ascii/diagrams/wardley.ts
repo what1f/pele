@@ -1,120 +1,212 @@
 import type { WardleyModel } from '../../diagrams/wardley/model.js';
-import { Canvas } from '../canvas/canvas.js';
+import { Canvas, type Rect } from '../canvas/canvas.js';
+import { Arm } from '../canvas/glyphs.js';
 import type { AsciiDiagram } from '../core.js';
-import { drawEdgeLine, finishEdge, type EdgeStyle } from '../draw/edges.js';
-import type { Point } from '../layout/graph.js';
-import { label } from '../text/label.js';
-import { displayWidth, wrap } from '../text/width.js';
+import { gridLabel, gridWires, port, type Wire } from '../draw/grid-wires.js';
+import type { TextBlock } from '../text/label.js';
 
-const number = (value: number): string => String(Number(value.toFixed(6)));
-
-interface Entry { key: string; text: string; x: number; y: number; symbol: string }
+interface Item {
+  id?: string;
+  x: number;
+  visibility: number;
+  symbol: string;
+  inertia?: boolean;
+  connector?: boolean;
+  text: TextBlock;
+  rect: Rect;
+  caption: Rect;
+}
 
 export const wardley: AsciiDiagram<WardleyModel> = {
   type: 'wardley',
   render(model, ctx) {
     const canvas = new Canvas();
-    const entries: Entry[] = [];
-    const ids = new Map<string, string>();
-    const add = (key: string, raw: string, x: number, y: number, symbol: string): void => { entries.push({ key, text: raw, x, y, symbol }); };
-    model.nodes.forEach((n, i) => {
-      const key = String(i + 1);
-      ids.set(n.id, key);
-      const details = [n.className === 'anchor' ? 'anchor' : n.isPipelineParent ? 'pipeline' : '', n.sourceStrategy, n.inertia ? 'inertia' : ''].filter(Boolean);
-      add(key, `${n.label}${details.length ? ' · ' + details.join(' · ') : ''}`, n.x!, n.y!, n.className === 'anchor' ? '◆' : '●');
-    });
-    model.trends.forEach((t, i) => add(`E${i + 1}`, `Evolve ${ids.get(t.nodeId) ?? t.nodeId}`, t.targetX, t.targetY, '○'));
-    model.notes.forEach((n, i) => add(`N${i + 1}`, n.text, n.x, n.y, ''));
-    for (const a of model.annotations) a.coordinates.forEach((p, i) => add(`A${a.number}${i ? '.' + (i + 1) : ''}`, a.text ?? '', p.x, p.y, ''));
-    model.accelerators.forEach((f, i) => add(`F${i + 1}`, `Accelerator · ${f.name}`, f.x, f.y, '▶'));
-    model.deaccelerators.forEach((f, i) => add(`D${i + 1}`, `Deaccelerator · ${f.name}`, f.x, f.y, '◀'));
-    const left = Math.max(6, ...entries.map(e => displayWidth(number(e.y)) + 2));
-    const width = Math.max(28, Math.min(ctx.compact ? 72 : 96, ctx.maxWidth - left - 1));
-    const room = width - 4;
-    const text = (raw: string, limit = room): string[] => label(raw, { maxWidth: limit }).lines.flatMap(s => wrap(s, limit));
+    const width = Math.max(34, Math.min(ctx.compact ? 88 : 104, ctx.maxWidth - 12));
+    const text = (raw: string | undefined, room = ctx.compact ? 14 : 22) => gridLabel(raw, { maxWidth: Math.max(2, room) });
     const stages = model.axes.stages?.length ? model.axes.stages : ['Genesis', 'Custom Built', 'Product', 'Commodity'];
     const custom = model.axes.stageBoundaries?.length === stages.length;
-    const boundaries = stages.map((_, i) => custom ? Math.max(0, Math.min(1, model.axes.stageBoundaries![i])) : (i + 1) / stages.length);
-    text(model.axes.yLabel ?? 'Visibility', width).forEach((s, i) => canvas.text(left, i, s));
-    const tokenWidth = Math.max(2, ...entries.map(e => displayWidth(e.symbol + e.key)));
-    const projectX = (value: number): number => left + 2 + Math.round(value / 100 * (width - 6 - tokenWidth));
-    const top = text(model.axes.yLabel ?? 'Visibility', width).length + 1;
-    let y = top;
-    const groups = [...new Set(entries.map(e => e.y))].sort((a, b) => b - a);
-    // Labels live below the map, so dense coordinates cannot hide names or dependencies.
-    for (const value of groups) {
-      const rows: { end: number; entries: { entry: Entry; x: number }[] }[] = [];
-      for (const entry of entries.filter(e => e.y === value).sort((a, b) => a.x - b.x)) {
-        const x = projectX(entry.x);
-        let row = rows.find(r => r.end + 2 <= x);
-        if (!row) { row = { end: -Infinity, entries: [] }; rows.push(row); }
-        row.entries.push({ entry, x }); row.end = x + displayWidth(entry.symbol + entry.key);
-      }
-      canvas.textIn(0, y, left - 2, number(value), 'right');
-      for (const row of rows) {
-        row.entries.forEach(p => canvas.text(p.x - 1, y, ' ' + p.entry.symbol + p.entry.key + ' '));
-        y += 2;
-      }
+    const boundaries = stages.map((_, i) => custom ? model.axes.stageBoundaries![i] : (i + 1) / stages.length);
+    const project = (x: number) => 6 + Math.round(x / 100 * (width - 14));
+    const stageXs = boundaries.slice(0, -1).map(b => project(b * 100));
+    const items: Item[] = [];
+    const byId = new Map<string, Item>();
+    const outgoing = new Map<string, number>();
+    const incoming = new Map<string, number>();
+    for (const link of model.links) {
+      outgoing.set(link.source, (outgoing.get(link.source) ?? 0) + 1);
+      incoming.set(link.target, (incoming.get(link.target) ?? 0) + 1);
     }
-    const bottom = Math.max(top + 2, y);
-    canvas.segment(left, top - 1, left, bottom);
-    canvas.segment(left, bottom, left + width - 1, bottom);
-    let prior = 0;
-    let stageHeight = 0;
-    stages.forEach((stage, i) => {
-      const end = i === stages.length - 1 ? width - 1 : projectX(boundaries[i] * 100) - left;
-      const start = i === 0 ? 0 : projectX(prior * 100) - left;
-      const w = Math.max(2, end - start);
-      const rows = text(stage, w - 1);
-      rows.forEach((s, j) => canvas.textIn(left + start, bottom + 1 + j, w, s));
-      stageHeight = Math.max(stageHeight, rows.length);
-      if (i > 0) canvas.segment(left + start, top - 1, left + start, bottom, { dashed: true, role: 'muted' });
-      prior = boundaries[i];
-    });
-    y = bottom + stageHeight + 2;
-    text(model.axes.xLabel ?? 'Evolution').forEach(s => canvas.textIn(left, y++, width, s));
-    y++;
-    const card = (heading: string, rows: string[]): void => {
-      const title = ` ${text(heading).join(' ')} `;
-      const body = rows.flatMap(s => text(s));
-      const w = Math.min(width, Math.max(displayWidth(title) + 4, ...body.map(s => displayWidth(s) + 4)));
-      canvas.box(left, y, w, body.length + 4, { fill: false });
-      canvas.text(left + 2, y, title);
-      body.forEach((s, j) => canvas.textIn(left + 2, y + 2 + j, w - 4, s));
-      y += body.length + 5;
+    for (const trend of model.trends) outgoing.set(trend.nodeId, (outgoing.get(trend.nodeId) ?? 0) + 1);
+    const add = (x: number, visibility: number, symbol: string, raw?: string, id?: string, inertia?: boolean): Item => {
+      const degree = id ? Math.max(outgoing.get(id) ?? 0, incoming.get(id) ?? 0, 1) : 1;
+      const item: Item = {
+        id, x, visibility, symbol, inertia, text: text(raw),
+        rect: { x: 0, y: 0, w: symbol ? degree === 1 ? 1 : 2 * degree + 1 : 0, h: 1 },
+        caption: { x: 0, y: 0, w: 0, h: 0 },
+      };
+      items.push(item);
+      if (id) byId.set(id, item);
+      return item;
     };
-    for (const e of entries) {
-      const rows = text(`${e.symbol}${e.key} · ${e.text} [${number(e.y)}, ${number(e.x)}]`);
-      rows.forEach((s, i) => canvas.text(left + (i ? 2 : 0), y++, s));
+    for (const n of model.nodes) {
+      const symbol = n.className === 'anchor' ? '◆' : n.sourceStrategy === 'build' ? '◇' : n.sourceStrategy === 'buy' ? '○' : n.sourceStrategy === 'outsource' ? '◉' : n.sourceStrategy === 'market' ? '△' : '●';
+      add(n.x!, n.y!, symbol, n.label, n.id, n.inertia);
     }
-    if (entries.length) y++;
-    for (const p of model.pipelines) card(`Pipeline · ${ids.get(p.nodeId) ?? p.nodeId}`, p.componentIds.map(id => `${ids.get(id) ?? id} · ${model.nodes.find(n => n.id === id)?.label ?? id}`));
-    const connection = (a: string, b: string, caption: string | undefined, style: EdgeStyle): void => {
-      const captions = caption ? text(caption, width - 16) : [];
-      const aw = displayWidth(a) + 4, bw = displayWidth(b) + 4;
-      const span = Math.min(width, Math.max(24, ...captions.map(s => displayWidth(s) + 16), aw + bw + 8));
-      const ly = y + captions.length + 1;
-      captions.forEach((s, j) => canvas.textIn(left + aw + 1, y + j, span - aw - bw - 2, s));
-      canvas.box(left, ly - 1, aw, 3);
-      canvas.text(left + 2, ly, a);
-      const bx = left + span - bw;
-      canvas.box(bx, ly - 1, bw, 3);
-      canvas.text(bx + 2, ly, b);
-      const points: Point[] = [[left + aw - 1, ly], [bx - 1, ly]];
-      drawEdgeLine(canvas, points, style);
-      finishEdge(canvas, points, style);
-      y = ly + 3;
+    const trends = model.trends.map(t => add(t.targetX, t.targetY, '○'));
+    for (const note of model.notes) add(note.x, note.y, '', note.text);
+    for (const a of model.annotations) for (const p of a.coordinates) add(p.x, p.y, '', `${a.number} ${a.text ?? ''}`);
+    for (const f of model.accelerators) add(f.x, f.y, '▶', f.name);
+    for (const f of model.deaccelerators) add(f.x, f.y, '◀', f.name);
+
+    // Reserve edge captions before routing; a long label must stay inside the map.
+    const captions = new Map<object, Item>();
+    for (const link of model.links) {
+      const a = byId.get(link.source), b = byId.get(link.target);
+      if (!link.label || !a || !b) continue;
+      const caption = add((a.x + b.x) / 2, (a.visibility + b.visibility) / 2, '', link.label);
+      caption.connector = true;
+      captions.set(link, caption);
+    }
+    let y = 2;
+    const overlaps = (a: Rect, b: Rect) => a.x <= b.x + b.w + 3 && a.x + a.w + 3 >= b.x && a.y <= b.y + b.h + 2 && a.y + a.h + 2 >= b.y;
+    const reserved: Rect[] = [];
+    for (const visibility of [...new Set(items.map(i => i.visibility))].sort((a, b) => b - a)) {
+      let bottom = y;
+      for (const item of items.filter(i => i.visibility === visibility)) {
+        const desired = project(item.x);
+        // Nudge ports off stage dividers so vertical exits cannot follow the grid.
+        const candidates = [0, ...Array.from({ length: 8 }, (_, n) => [n + 1, -n - 1]).flat()];
+        const x = candidates.map(offset => desired + offset).find(x => {
+          const r = { ...item.rect, x: x - Math.floor(item.rect.w / 2) };
+          const ports = item.id ? [['B', outgoing.get(item.id) ?? 0], ['T', incoming.get(item.id) ?? 0]] as const : [];
+          const xs = ports.flatMap(([side, count]) => Array.from({ length: count }, (_, n) => port(r, side, n, count).at[0]));
+          if (trends.includes(item)) xs.push(x);
+          return r.x >= 2 && r.x + r.w < width - 2 && stageXs.every(s => xs.every(p => Math.abs(p - s) > (trends.includes(item) ? 3 : 1)));
+        }) ?? desired;
+        item.rect.x = x - Math.floor(item.rect.w / 2);
+        const right = item.rect.x + item.rect.w + (item.inertia ? 2 : 1);
+        const left = item.rect.x - item.text.width - 2;
+        const onRight = right + item.text.width < width - 2 || left < 2;
+        const room = onRight ? width - 2 - right : item.rect.x - 4;
+        if (item.text.width > room) item.text = text(item.text.lines.join('<br>'), room);
+        item.caption.w = item.text.width;
+        item.caption.h = item.text.height;
+        item.caption.x = item.symbol ? onRight ? right : item.rect.x - item.text.width - 2 : Math.max(2, Math.min(width - item.text.width - 2, x));
+        let row = y;
+        for (;;) {
+          item.caption.y = row;
+          item.rect.y = row + Math.max(0, item.text.height - 1);
+          if (item.connector) item.rect = { ...item.caption };
+          const regions = item.symbol ? [item.rect, item.caption] : [item.caption];
+          if (!regions.some(a => reserved.some(b => overlaps(a, b)))) break;
+          row++;
+        }
+        if (item.symbol || item.connector) {
+          const above = Math.max(1, 2 * (incoming.get(item.id ?? '') ?? 0));
+          const below = Math.max(1, 2 * (outgoing.get(item.id ?? '') ?? 0) + 1);
+          reserved.push({ x: item.rect.x - 1, y: item.rect.y - above, w: item.rect.w + 2, h: above + below + 1 });
+        }
+        if (item.text.height) reserved.push({ ...item.caption });
+        bottom = Math.max(bottom, item.rect.y + 1, item.caption.y + item.caption.h);
+      }
+      y = bottom + Math.max(4, 2 * Math.max(1, ...items.filter(i => i.visibility === visibility).map(i => outgoing.get(i.id ?? '') ?? 0)) + 2);
+    }
+    const plotBottom = Math.max(5, y - 1);
+    const dividers: Rect[] = [];
+    for (let i = 0; i < stages.length - 1; i++) {
+      const x = stageXs[i];
+      canvas.segment(x, 1, x, plotBottom, { dashed: true, role: 'muted' });
+      dividers.push({ x, y: 1, w: 1, h: plotBottom });
+    }
+    const pipelines: Rect[] = model.pipelines.flatMap(pipeline => {
+      const members = [pipeline.nodeId, ...pipeline.componentIds].map(id => byId.get(id)).filter((i): i is Item => i !== undefined);
+      if (members.length < 2) return [];
+      const x = Math.min(...members.map(i => Math.min(i.rect.x, i.caption.x))) - 3;
+      const right = Math.max(...members.map(i => Math.max(i.rect.x + i.rect.w, i.caption.x + i.caption.w))) + 3;
+      const top = Math.min(...members.map(i => i.caption.y)) - 3;
+      const bottom = Math.max(...members.map(i => i.rect.y)) + 3;
+      return [{ x, y: top, w: right - x + 1, h: bottom - top + 1 }];
+    });
+    const wires: Wire[] = [];
+    const outs = new Map<string, number>(), ins = new Map<string, number>();
+    const captionPort = (item: Item, side: 'T' | 'B') => {
+      const result = port(item.rect, side);
+      const xs = Array.from({ length: Math.max(1, item.rect.w - 2) }, (_, n) => item.rect.x + n + 1);
+      xs.sort((a, b) => Math.abs(a - result.at[0]) - Math.abs(b - result.at[0]));
+      result.at[0] = xs.find(x => stageXs.every(s => Math.abs(s - x) > 1)) ?? result.at[0];
+      result.fixed = true;
+      return result;
+    };
+    const sourcePort = (item: Item) => {
+      const n = outs.get(item.id!) ?? 0;
+      outs.set(item.id!, n + 1);
+      return { ...port(item.rect, 'B', n, outgoing.get(item.id!) ?? 1), fixed: true };
     };
     for (const l of model.links) {
-      const from = ids.get(l.source), to = ids.get(l.target);
-      if (!from || !to) continue;
-      connection(from, to, l.label, {
-        dashed: l.dashed,
-        head: l.flow === 'forward' || l.flow === 'bidirectional' ? 'arrow' : 'none',
-        tail: l.flow === 'backward' || l.flow === 'bidirectional' ? 'arrow' : 'none',
-      });
+      const a = byId.get(l.source), b = byId.get(l.target);
+      if (!a || !b) continue;
+      const n = ins.get(l.target) ?? 0;
+      ins.set(l.target, n + 1);
+      const from = sourcePort(a);
+      const to = { ...port(b.rect, 'T', n, incoming.get(l.target) ?? 1), fixed: true };
+      const head = l.flow === 'forward' || l.flow === 'bidirectional' ? 'arrow' : 'none';
+      const tail = l.flow === 'backward' || l.flow === 'bidirectional' ? 'arrow' : 'none';
+      const caption = captions.get(l);
+      if (caption) {
+        wires.push({ from, to: captionPort(caption, 'T'), text: text(undefined), style: { dashed: l.dashed, head: 'none', tail } });
+        wires.push({ from: captionPort(caption, 'B'), to, text: text(undefined), style: { dashed: l.dashed, head, tail: 'none' } });
+      } else wires.push({ from, to, text: text(undefined), style: { dashed: l.dashed, head, tail } });
     }
-    model.trends.forEach((t, i) => connection(ids.get(t.nodeId) ?? t.nodeId, `○E${i + 1}`, undefined, { dashed: true, head: 'arrow' }));
+    model.trends.forEach((t, i) => {
+      const from = byId.get(t.nodeId);
+      if (from) wires.push({ from: sourcePort(from), to: { ...port(trends[i].rect, t.targetX >= from.x ? 'L' : 'R'), fixed: true }, style: { dashed: true, head: 'arrow' }, text: text(undefined) });
+    });
+    const walls: Rect[] = [{ x: -3, y: -20, w: 4, h: plotBottom + 50 }, { x: width - 1, y: -20, w: 4, h: plotBottom + 50 }];
+    const finish = gridWires(canvas, [...walls, ...items.filter(i => i.symbol || i.connector).map(i => i.rect)], dividers, items.filter(i => i.text.height && !i.connector).map(i => i.caption), wires);
+    for (const item of items) {
+      if (item.symbol) {
+        canvas.segment(item.rect.x, item.rect.y, item.rect.x + item.rect.w - 1, item.rect.y);
+        canvas.put(item.rect.x + Math.floor(item.rect.w / 2), item.rect.y, item.symbol);
+        if (item.inertia) canvas.put(item.rect.x + item.rect.w, item.rect.y, '┃');
+      }
+      if (item.text.height && !item.connector) {
+        canvas.clear(item.caption.x - 1, item.caption.y, item.caption.w + 2, item.caption.h);
+        item.text.lines.forEach((s, i) => canvas.text(item.caption.x, item.caption.y + i, s));
+      }
+    }
+    finish();
+    for (const item of captions.values()) {
+      canvas.clear(item.caption.x, item.caption.y, item.caption.w, item.caption.h);
+      item.text.lines.forEach((s, i) => canvas.textIn(item.caption.x, item.caption.y + i, item.caption.w, s));
+    }
+    // Expand transparent pipeline frames rather than drawing a border along a wire.
+    for (const frame of pipelines) {
+      let x0 = frame.x, x1 = frame.x + frame.w - 1, y0 = frame.y, y1 = frame.y + frame.h - 1;
+      const conflict = (x: number, y: number, axis: number) => (canvas.armsAt(x, y) & axis) !== 0 || /\S/u.test(canvas.charAt(x, y) ?? '');
+      for (let pass = 0; pass < 20; pass++) {
+        let moved = false;
+        if (Array.from({ length: x1 - x0 + 1 }, (_, i) => x0 + i).some(x => conflict(x, y0, Arm.Left | Arm.Right))) { y0--; moved = true; }
+        if (Array.from({ length: x1 - x0 + 1 }, (_, i) => x0 + i).some(x => conflict(x, y1, Arm.Left | Arm.Right))) { y1++; moved = true; }
+        if (Array.from({ length: y1 - y0 + 1 }, (_, i) => y0 + i).some(y => conflict(x0, y, Arm.Up | Arm.Down))) { x0--; moved = true; }
+        if (Array.from({ length: y1 - y0 + 1 }, (_, i) => y0 + i).some(y => conflict(x1, y, Arm.Up | Arm.Down))) { x1++; moved = true; }
+        if (!moved) break;
+      }
+      canvas.path([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]);
+    }
+    const bounds = canvas.bounds();
+    const bottom = Math.max(plotBottom, bounds ? bounds.y + bounds.h + 1 : 0);
+    canvas.segment(0, 1, 0, bottom);
+    canvas.segment(0, bottom, width - 1, bottom);
+    const heading = text(model.axes.yLabel ?? 'Visibility', width);
+    heading.lines.forEach((s, i) => canvas.text(0, -heading.height + i, s));
+    let start = 0, height = 0;
+    stages.forEach((stage, i) => {
+      const end = i === stages.length - 1 ? width : dividers[i].x;
+      const rows = text(stage, Math.max(2, end - start - 2));
+      rows.lines.forEach((s, j) => canvas.textIn(start, bottom + 1 + j, end - start, s));
+      height = Math.max(height, rows.height); start = end;
+    });
+    text(model.axes.xLabel ?? 'Evolution', width).lines.forEach((s, i) => canvas.textIn(0, bottom + height + 2 + i, width, s));
     return canvas;
   },
 };
