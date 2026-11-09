@@ -47,18 +47,17 @@ function render(model: QuadrantModel, ctx: AsciiContext): Canvas {
   let next = bottom + Math.max(xl.length, xr.length) + 2;
   const clear = (x: number, y: number, w: number, h: number) => {
     if (x <= left || x + w >= right || y < 1 || y + h > bottom) return false;
-    for (let row = y - 1; row <= y + h; row++) for (let col = x - 1; col <= x + w; col++) if (c.occupied(col, row)) return false;
+    for (let row = y; row < y + h; row++) for (let col = x - 1; col <= x + w; col++) {
+      if (c.occupied(col, row)) return false;
+    }
     return true;
   };
   const placements = entries.map((g, index) => {
     const p = model.points[g.points[0]], lines = text(p.text, half - 3);
     const w = Math.max(0, ...lines.map(displayWidth)), y = g.y - Math.floor((lines.length - 1) / 2);
-    const tileLeft = g.x < mid ? left + 2 : mid + 2;
-    const tileRight = g.x < mid ? mid - 2 : right - 2;
-    const centered = Math.max(tileLeft, Math.min(tileRight - w + 1, g.x - Math.floor(w / 2)));
-    const candidates = [[g.x + keyWidth + 1, y], [g.x - w - 1, y], [centered, g.y - lines.length - 1], [centered, g.y + 2]];
+    const centered = g.x - Math.floor(w / 2);
+    const candidates = [[g.x + keyWidth + 1, y], [g.x - w - 1, y], [centered, g.y - lines.length], [g.x, g.y - lines.length], [centered, g.y + 1], [g.x, g.y + 1]];
     const room = candidates.filter(([x, y]) => clear(x, y, w, lines.length)).length;
-    for (const gap of [2, 3]) candidates.push([centered, g.y - lines.length - gap - 1], [centered, g.y + gap + 1]);
     const tileTop = g.y < center ? 1 : center + 1, tileBottom = g.y < center ? center - 1 : bottom - 1;
     return { g, index, lines, w, candidates: candidates.filter(([, y]) => y >= tileTop && y + lines.length - 1 <= tileBottom), room };
   });

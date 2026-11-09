@@ -239,7 +239,7 @@ function trimBars(c: Canvas, bars: Bar[], lines: Canvas, horizontal: boolean): v
     // Keep only the bar body connected to its baseline below the crossing.
     if (horizontal) c.clear(Math.min(base, Math.floor(bar.tip)), bar.y, extent + 2, 1);
     else c.clear(bar.x, Math.min(base, Math.floor(bar.tip)), bar.width, extent + 2);
-    drawBar(c, { ...bar, tip: cut }, horizontal);
+    drawBar(c, { ...bar, tip: cut - sign }, horizontal);
   }
 }
 
