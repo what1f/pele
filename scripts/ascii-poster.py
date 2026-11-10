@@ -1,10 +1,11 @@
-# Draws the README poster: the drawings from scripts/ascii-poster.mjs as terminal windows in two columns.
-#   npm run build && python3 scripts/ascii-poster.py [out.png]
+# Draws the README images: the drawings from scripts/ascii-poster.mjs as terminal windows, in up to two columns.
+#   npm run build && python3 scripts/ascii-poster.py [poster|cjk] [out.png]
 import itertools, json, re, subprocess, sys, unicodedata
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else 'media/poster.png'
+SET = sys.argv[1] if len(sys.argv) > 1 else 'poster'
+OUT = sys.argv[2] if len(sys.argv) > 2 else f'media/{SET}.png'
 
 S = 2  # pixel scale
 FS, CW, CH = 13 * S, 8 * S, 17 * S
@@ -19,12 +20,12 @@ def font(paths, size):
     raise SystemExit(f'no font in {paths}')
 
 mono = font(['~/Library/Fonts/JetBrainsMono-Regular.ttf', '/System/Library/Fonts/Menlo.ttc'], FS)
-cjk = font(['/System/Library/Fonts/Hiragino Sans GB.ttc'], FS)
+cjk = font(['/System/Library/Fonts/Hiragino Sans GB.ttc'], round(FS * 1.15))  # CJK fills its two cells, as in terminals
 sym = font(['/System/Library/Fonts/Apple Symbols.ttf'], FS)
 emoji = font(['/System/Library/Fonts/Apple Color Emoji.ttc'], 40)  # bitmap font: only this size
 head = font(['~/Library/Fonts/JetBrainsMono-Medium.ttf', '/System/Library/Fonts/Menlo.ttc'], 11 * S)
 
-data = json.loads(subprocess.run(['node', 'scripts/ascii-poster.mjs'], capture_output=True, check=True).stdout)
+data = json.loads(subprocess.run(['node', 'scripts/ascii-poster.mjs', SET], capture_output=True, check=True).stdout)
 
 def width(c):
     if unicodedata.combining(c): return 0
@@ -134,15 +135,17 @@ def window(name, lines, w_cols):
             x += w
     return img
 
-wins = [window(d['name'], d['lines'], data['width']) for d in data['drawings']]
-# Split into two columns, keeping the order, so the columns end as level as possible.
-def heights(pick): return [sum(w.height + GAP for w, p in zip(wins, pick) if p == c) for c in (0, 1)]
-pick = min(itertools.product((0, 1), repeat=len(wins)), key=lambda p: (max(heights(p)), p))
+width_cols = max(cols(d['lines']) for d in data)
+wins = [window(d['name'], d['lines'], width_cols) for d in data]
+ncols = min(2, len(wins))
+# Split into columns, keeping the order, so the columns end as level as possible.
+def heights(pick): return [sum(w.height + GAP for w, p in zip(wins, pick) if p == c) for c in range(ncols)]
+pick = min(itertools.product(range(ncols), repeat=len(wins)), key=lambda p: (max(heights(p)), p))
 colw = wins[0].width
-W = 2 * colw + GAP + 2 * MARGIN
+W = ncols * colw + (ncols - 1) * GAP + 2 * MARGIN
 H = max(heights(pick)) - GAP + 2 * MARGIN
 out = Image.new('RGB', (W, H), BG)
-ys = [MARGIN, MARGIN]
+ys = [MARGIN] * ncols
 for w, c in zip(wins, pick):
     out.paste(w, (MARGIN + c * (colw + GAP), ys[c]))
     ys[c] += w.height + GAP

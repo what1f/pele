@@ -46,12 +46,7 @@ The result has `text`, `lines`, `width` and `height` in terminal columns and row
 
 Wide characters such as CJK count as two columns, so labels line up:
 
-```
-                                      ╭────────╮
-┌──────┐            ┌──────────┐      ├────────┤
-│ 用户 ├─── 下单 ──▶│ 订单服务 ├─────▶│ 数据库 │
-└──────┘            └──────────┘      ╰────────╯
-```
+<img src="media/cjk.png" alt="A flowchart with Chinese labels drawn as text" width="524">
 
 `charset: 'ascii'` draws the same layout for terminals and logs without Unicode:
 
@@ -68,7 +63,7 @@ Wide characters such as CJK count as two columns, so labels line up:
 
 `pele/ascii` also exports `render`, so a program that wants both SVG and text bundles one parser.
 
-[ASCII.md](ASCII.md) describes how the text renderer is built. `npm run build && python3 scripts/ascii-poster.py` redraws the poster above.
+[ASCII.md](ASCII.md) describes how the text renderer is built. `npm run build && python3 scripts/ascii-poster.py [poster|cjk]` redraws the images above.
 
 ## Used by
 

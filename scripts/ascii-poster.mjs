@@ -1,8 +1,8 @@
-// Draws the README poster's diagrams as text and prints them as JSON, for scripts/ascii-poster.py.
+// Draws the README images' diagrams as text and prints them as JSON, for scripts/ascii-poster.py.
 // Run `npm run build` first.
 import { renderAscii } from '../dist/ascii.js';
 
-const SOURCES = {
+const POSTER = {
   Sequence: `sequenceDiagram
   actor U as User
   participant C as CLI
@@ -70,6 +70,13 @@ const SOURCES = {
   commit`,
 };
 
+// Code blocks on GitHub do not draw CJK at exactly two columns, so this one is an image too.
+const CJK = {
+  Flowchart: `flowchart LR
+  A[用户] -->|下单| B[订单服务] -->|扣款| C[支付服务]`,
+};
+
+const SETS = { poster: POSTER, cjk: CJK };
 const WIDTH = 58; // two columns fit a README at a readable size
-const drawings = Object.entries(SOURCES).map(([name, source]) => ({ name, lines: renderAscii(source, { maxWidth: WIDTH }).lines }));
-process.stdout.write(JSON.stringify({ width: WIDTH, drawings }));
+const drawings = Object.entries(SETS[process.argv[2] ?? 'poster']).map(([name, source]) => ({ name, lines: renderAscii(source, { maxWidth: WIDTH }).lines }));
+process.stdout.write(JSON.stringify(drawings));
