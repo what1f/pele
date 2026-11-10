@@ -1,0 +1,41 @@
+# This fork ships from GitHub releases, not npm: a tag such as 1.13.0-ascii.1
+# builds, checks and attaches the packed tarball, which dependents install by URL.
+name: Release fork
+
+on:
+  push:
+    tags:
+      - "*-ascii.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - name: Verify tag matches package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+      - name: Check package
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Pack release
+        run: |
+          mkdir release
+          npm pack --ignore-scripts --pack-destination release
+          node scripts/check-pack.mjs release/*.tgz
+          # A fixed name, so a dependent's URL names the version once.
+          mv release/*.tgz release/pele.tgz
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes release/pele.tgz

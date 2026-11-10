@@ -21,6 +21,9 @@ await build({ ...shared, entryPoints: ['src/index.ts'], outfile: 'dist/pele.js' 
 
 await build({ ...browserBuild, outfile: 'dist/pele.global.js' });
 
+// Text drawings for terminals, apart from the SVG renderer.
+await build({ ...shared, entryPoints: ['src/ascii/index.ts'], outfile: 'dist/ascii.js' });
+
 // The same code in pieces: a core, one entry per diagram type, and a loader that fetches a type
 // when it is first needed. Code that several of them use goes into shared chunks.
 const types = readdirSync('src/entries').map((file) => file.replace(/\.ts$/, ''));
@@ -70,6 +73,7 @@ function closure(entry) {
 
 console.log(`dist/pele.js  ${sizes(['dist/pele.js'])}`);
 console.log(`dist/pele.global.js  ${sizes(['dist/pele.global.js'])}`);
+console.log(`dist/ascii.js  ${sizes(['dist/ascii.js'])}`);
 console.log(`dist/esm/core.js with its chunks  ${sizes(closure('dist/esm/core.js'))}`);
 console.log(`dist/esm/lazy.js with its chunks  ${sizes(closure('dist/esm/lazy.js'))}`);
 if (process.argv.includes('--sizes')) {

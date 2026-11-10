@@ -1,6 +1,6 @@
 {
   "name": "pele",
-  "version": "1.13.0",
+  "version": "1.13.0-ascii.1",
   "description": "A fast, lightweight Mermaid renderer that outputs themeable SVG.",
   "license": "MIT",
   "author": "kepano",
@@ -42,6 +42,11 @@
       "types": "./dist/entries/*.d.ts",
       "import": "./dist/esm/diagrams/*.js",
       "default": "./dist/esm/diagrams/*.js"
+    },
+    "./ascii": {
+      "types": "./dist/ascii/index.d.ts",
+      "import": "./dist/ascii.js",
+      "default": "./dist/ascii.js"
     },
     "./global": "./dist/pele.global.js",
     "./package.json": "./package.json"

@@ -33,12 +33,14 @@ writeFileSync(
 import { register, supports } from 'pele/core';
 import flowchart from 'pele/diagrams/flowchart';
 import { renderAsync, mountAsync } from 'pele/lazy';
+import { renderAscii } from 'pele/ascii';
 
 const source = 'flowchart LR\\n  A --> B';
 if (render(source).type !== 'flowchart') throw new Error('pele does not render');
 register(flowchart);
 if (!supports(source)) throw new Error('pele/core does not take a registered type');
 if ((await renderAsync('pie\\n  "a": 1')).type !== 'pie') throw new Error('pele/lazy does not load a type');
+if (!renderAscii(source).text.includes('A')) throw new Error('pele/ascii does not draw');
 if (typeof mount !== 'function' || typeof mountAsync !== 'function') throw new Error('mount is missing');
 `
 );

@@ -19,6 +19,8 @@ export { AsciiError, asciiSupports, registerAscii } from './core.js';
 export type { AsciiContext, AsciiDiagram, AsciiErrorCode, AsciiOptions, AsciiRenderer, AsciiResult } from './core.js';
 export { Canvas } from './canvas/canvas.js';
 export { displayWidth } from './text/width.js';
+// 这里本来就带着整个 pele，一并导出 SVG 渲染，两样都要的不用再打一份解析器
+export { render } from '../index.js';
 
 export function renderAscii(source: string, options: AsciiOptions = {}): AsciiResult {
   const model = parse(source, { config: options.config });
